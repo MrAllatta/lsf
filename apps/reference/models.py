@@ -22,7 +22,7 @@ class CropInfo(models.Model):
     harvest_bin = models.CharField(max_length=50, blank=True)
     harvest_tools = models.CharField(max_length=100, blank=True)
     harvest_rate_per_hour = models.PositiveIntegerField(null=True, blank=True)
-    
+
     # Nursery
     nursery_weeks = models.PositiveIntegerField(default=0)
     weeks_until_pot_up = models.PositiveIntegerField(default=0)
@@ -32,10 +32,10 @@ class CropInfo(models.Model):
     thinned_plants = models.PositiveIntegerField(default=0)
     seeds_per_ounce = models.DecimalField(max_digits=10, decimal_places=1, 
                                           null=True, blank=True)
-    
+
     class Meta:
         ordering = ['name']
-    
+
     def __str__(self):
         return self.name
 
