@@ -1,5 +1,7 @@
 # reference/models.py
 from django.db import models
+import math
+from decimal import Decimal
 
 
 class CropInfo(models.Model):
@@ -109,3 +111,12 @@ class CropByseason(models.Model):
 
     def __str__(self):
         return f"{self.crop.name} / {self.get_block_type_display()}"
+
+
+class SalesChannel(models.Model):
+    market = models.CharField(max_length=200)
+
+
+class CropSalesFormat(models.Model):
+    crop_format = models.CharField(max_length=200)
+    channel_allocation_priority = models.PositiveIntegerField()
