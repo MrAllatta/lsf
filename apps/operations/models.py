@@ -2,6 +2,7 @@
 
 from django.db import models
 from decimal import Decimal
+from reference.models import CropInfo
 
 
 class FieldWalkNote(models.Model):
@@ -46,7 +47,7 @@ class InventoryLedger(models.Model):
         ("adjustment", "Adjustment"),
     ]
 
-    crop = models.ForeignKey("reference.CropInfo", on_delete=models.PROTECT)
+    crop = models.ForeignKey(CropInfo, on_delete=models.PROTECT)
     harvest_event = models.ForeignKey(
         "planning.HarvestEvent", on_delete=models.SET_NULL, null=True, blank=True
     )
@@ -95,12 +96,10 @@ class PackAllocation(models.Model):
     channel = models.ForeignKey("reference.SalesChannel", on_delete=models.PROTECT)
     product = models.ForeignKey("reference.CropSalesFormat", on_delete=models.PROTECT)
 
-    channel_allocation_priority = models.PositiveIntegerField()
-
     pack_date = models.DateField()
     quantity = models.DecimalField(max_digits=10, decimal_places=2)
 
     notes = models.TextField(blank=True)
 
     class Meta:
-        ordering = ["pack_date", "channel_allocation_priority"]
+        ordering = ["pack_date", "channel__allocation_priority"]
