@@ -1,7 +1,8 @@
-# reference/models.py
+"""reference/models.py data models for farm references."""
 from django.db import models
 import math
 from decimal import Decimal
+from django.contrib.postgres.fields import ArrayField
 
 
 class CropInfo(models.Model):
@@ -113,10 +114,47 @@ class CropByseason(models.Model):
         return f"{self.crop.name} / {self.get_block_type_display()}"
 
 
-class SalesChannel(models.Model):
-    market = models.CharField(max_length=200)
-
-
 class CropSalesFormat(models.Model):
-    crop_format = models.CharField(max_length=200)
-    channel_allocation_priority = models.PositiveIntegerField()
+    crop = models.ForeignKey(CropInfo, on_delete=models.CASCADE, related_name="sales_formats")
+    product_name = models.CharField(max_length=100)
+    sale_price = models.DecimalField(max_digits=8, decimal_places=2)
+    sale_unit = models.CharField(max_length=20)  # "each", "pound", "bunch", "pint", "bag"
+    harvest_qty_per_sale_unit = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal("1.00")
+    )
+    sku = models.CharField(max_length=50, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["crop__name", "product_name"]
+
+    def __str__(self):
+        return f"{self.product_name} @ ${self.sale_price}/{self.sale_unit}"
+
+
+class SalesChannel(models.Model):
+    name = models.CharField(max_length=100)
+    days_of_week = ArrayField(
+        models.CharField(max_length=10), default=list
+    )  # PostgreSQL array field
+    start_week = models.PositiveIntegerField()
+    end_week = models.PositiveIntegerField()
+    weekly_target = models.DecimalField(max_digits=10, decimal_places=2)
+    is_csa = models.BooleanField(default=False)
+    allocation_priority = models.PositiveIntegerField(default=10)
+
+    @property
+    def num_weeks(self):
+        if self.end_week >= self.start_week:
+            return self.end_week - self.start_week + 1
+        return (52 - self.start_week + 1) + self.end_week
+
+    @property
+    def annual_target(self):
+        return self.weekly_target * self.num_weeks
+
+    class Meta:
+        ordering = ["allocation_priority", "name"]
+
+    def __str__(self):
+        return self.name
