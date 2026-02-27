@@ -3,9 +3,9 @@
 from django.db import models
 from decimal import Decimal
 from reference.models import CropInfo
-from reference.models import Planting
 from reference.models import SalesChannel
 from reference.models import CropSalesFormat
+from planning.models import Planting
 from planning.models import HarvestEvent
 
 
