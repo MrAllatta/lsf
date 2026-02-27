@@ -3,6 +3,10 @@
 from django.db import models
 from decimal import Decimal
 from reference.models import CropInfo
+from reference.models import Planting
+from reference.models import SalesChannel
+from reference.models import CropSalesFormat
+from planning.models import HarvestEvent
 
 
 class FieldWalkNote(models.Model):
@@ -14,7 +18,7 @@ class FieldWalkNote(models.Model):
     ]
 
     planting = models.ForeignKey(
-        "planning.Planting", on_delete=models.CASCADE, related_name="field_walk_notes"
+        Planting, on_delete=models.CASCADE, related_name="field_walk_notes"
     )
     walk_date = models.DateField()
 
@@ -84,7 +88,7 @@ class InventoryLedger(models.Model):
 
 class PackAllocation(models.Model):
     harvest_event = models.ForeignKey(
-        "planning.HarvestEvent",
+        HarvestEvent,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -93,8 +97,8 @@ class PackAllocation(models.Model):
     inventory_draw = models.ForeignKey(
         InventoryLedger, on_delete=models.SET_NULL, null=True, blank=True
     )
-    channel = models.ForeignKey("reference.SalesChannel", on_delete=models.PROTECT)
-    product = models.ForeignKey("reference.CropSalesFormat", on_delete=models.PROTECT)
+    channel = models.ForeignKey(SalesChannel, on_delete=models.PROTECT)
+    product = models.ForeignKey(CropSalesFormat, on_delete=models.PROTECT)
 
     pack_date = models.DateField()
     quantity = models.DecimalField(max_digits=10, decimal_places=2)
