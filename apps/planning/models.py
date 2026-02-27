@@ -5,6 +5,7 @@ from decimal import Decimal
 from datetime import date, timedelta
 from django.contrib.postgres.fields import ArrayField
 from reference.models import CropInfo
+from reference.models import CropBySeason
 
 
 class PlanningYear(models.Model):
@@ -47,7 +48,7 @@ class Planting(models.Model):
     succession_group = models.CharField(max_length=50, blank=True)
 
     crop = models.ForeignKey(CropInfo, on_delete=models.PROTECT)
-    crop_season = models.ForeignKey("reference.CropBySeason", on_delete=models.PROTECT)
+    crop_season = models.ForeignKey(CropBySeason, on_delete=models.PROTECT)
     variety = models.CharField(max_length=100, blank=True)
     block = models.ForeignKey("reference.Block", on_delete=models.PROTECT)
     bed_start = models.PositiveIntegerField()
@@ -111,11 +112,11 @@ class Planting(models.Model):
                 planned_date=pot_up_date,
             )
 
-            NurseryEvent.objects.create(
-                planting=self,
-                event_type="transplant",
-                planned_date=self.planned_plant_date,
-            )
+        NurseryEvent.objects.create(
+            planting=self,
+            event_type="transplant",
+            planned_date=self.planned_plant_date,
+        )
 
     def generate_harvest_events(self):
         """Create planned weekly harvest events."""
@@ -210,6 +211,6 @@ class HarvestEvent(models.Model):
         units_per_bin = self.planting.crop.units_per_bin
         if units_per_bin:
             self.actual_quantity = bin_count * units_per_bin
-            self.actual_units = self.planting.crop.harvest_unit
+        self.actual_units = self.planting.crop.harvest_unit
         self.actual_date = date.today()
         self.save()
