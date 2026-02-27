@@ -1,4 +1,5 @@
 """reference/models.py data models for farm references."""
+
 from django.db import models
 import math
 from decimal import Decimal
@@ -76,7 +77,7 @@ class Block(models.Model):
         return f"{self.name} ({self.get_block_type_display()})"
 
 
-class CropByseason(models.Model):
+class CropBySeason(models.Model):
     crop = models.ForeignKey(CropInfo, on_delete=models.CASCADE, related_name="season_profiles")
     block_type = models.CharField(max_length=20, choices=BlockType.choices)
 
