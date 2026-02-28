@@ -1,0 +1,127 @@
+{# planning/partials/planting_detail.html #}
+{# This is the side panel that appears when you click a planting #}
+
+<div class="detail-panel-content">
+    <div class="detail-header">
+        <h2>{{ planting.crop.name }}</h2>
+        {% if planting.variety %}
+        <span class="variety">{{ planting.variety }}</span>
+        {% endif %}
+        <span class="status status-{{ planting.status }}">
+            {{ planting.get_status_display }}
+        </span>
+    </div>
+    
+    <div class="detail-location">
+        <strong>{{ planting.block.name }}</strong> beds {{ planting.bed_start }}–{{ planting.bed_end }}
+        · {{ planting.planned_bedfeet }} bedfoot
+    </div>
+    
+    {% if rotation_warning %}
+    <div class="warning">
+        ⚠ {{ planting.crop.botanical_family }} was in {{ planting.block.name }} 
+        in {{ rotation_last_year }} ({{ rotation_gap }}yr gap, minimum {{ rotation_min }}yr)
+    </div>
+    {% endif %}
+    
+    <table class="detail-table">
+        <tr>
+            <th></th><th>Planned</th><th>Actual</th>
+        </tr>
+        <tr>
+            <td>Plant date</td>
+            <td>Wk {{ planting.planned_plant_date|date:"W" }} · {{ planting.planned_plant_date|date:"M j" }}</td>
+            <td>{% if planting.actual_plant_date %}
+                Wk {{ planting.actual_plant_date|date:"W" }} · {{ planting.actual_plant_date|date:"M j" }}
+                {% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <td>First harvest</td>
+            <td>Wk {{ planting.planned_first_harvest_date|date:"W" }}</td>
+            <td>{% if planting.actual_first_harvest_date %}
+                Wk {{ planting.actual_first_harvest_date|date:"W" }}
+                {% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <td>Last harvest</td>
+            <td>Wk {{ planting.planned_last_harvest_date|date:"W" }}</td>
+            <td>{% if planting.actual_last_harvest_date %}
+                Wk {{ planting.actual_last_harvest_date|date:"W" }}
+                {% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <td>Total yield</td>
+            <td>{{ planting.planned_total_yield|floatformat:0 }} {{ planting.crop.harvest_unit }}</td>
+            <td>{% if total_actual_yield %}
+                {{ total_actual_yield|floatformat:0 }} {{ planting.crop.harvest_unit }}
+                ({{ yield_per_bedfoot|floatformat:2 }}/bf)
+                {% else %}—{% endif %}</td>
+        </tr>
+    </table>
+    
+    {# Nursery events #}
+    {% if nursery_events %}
+    <h3>Nursery</h3>
+    <table class="detail-table compact">
+        {% for ne in nursery_events %}
+        <tr>
+            <td>{{ ne.get_event_type_display }}</td>
+            <td>Wk {{ ne.planned_week }} · {{ ne.planned_date|date:"M j" }}</td>
+            <td>{% if ne.planned_tray_count %}
+                {{ ne.planned_tray_count }} trays ({{ ne.planned_tray_size }}-cell)
+                {% endif %}</td>
+            <td>{% if ne.actual_date %}
+                <span class="done">✓ Wk {{ ne.actual_date|date:"W" }}</span>
+                {% else %}
+                <span class="pending">pending</span>
+                {% endif %}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+    
+    {# Recent harvest events #}
+    {% if harvest_events %}
+    <h3>Harvest</h3>
+    <table class="detail-table compact">
+        <tr><th>Week</th><th>Planned</th><th>Actual</th></tr>
+        {% for he in harvest_events %}
+        <tr>
+            <td>Wk {{ he.planned_week }}</td>
+            <td>{{ he.planned_quantity|floatformat:0 }} {{ he.planned_units }}</td>
+            <td>{% if he.actual_quantity %}
+                {{ he.actual_quantity|floatformat:0 }} {{ he.actual_units }}
+                {% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+    
+    {# Field walk notes #}
+    {% if field_walk_notes %}
+    <h3>Field Notes</h3>
+    {% for fw in field_walk_notes %}
+    <div class="field-note condition-{{ fw.condition }}">
+        <strong>Wk {{ fw.walk_week }}</strong> — {{ fw.get_condition_display }}
+        {% if fw.yield_adjust_pct != 100 %}
+        · Yield adjusted to {{ fw.yield_adjust_pct }}%
+        {% endif %}
+        {% if fw.notes %}<br>{{ fw.notes }}{% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+    
+    {# Actions #}
+    <div class="detail-actions">
+        <a href="{% url 'planning:planting_edit' planting.id %}" 
+           class="btn">Edit</a>
+        {% if planting.status == 'harvesting' or planting.status == 'growing' %}
+        <a href="{% url 'planning:planting_revise' planting.id %}" 
+           class="btn btn-warning">Revise</a>
+        {% endif %}
+        <a href="{% url 'operations:harvest_entry' planting.id %}" 
+           class="btn btn-primary">Record Harvest</a>
+        <a href="{% url 'operations:field_walk' planting.id %}" 
+           class="btn">Field Walk Note</a>
+    </div>
+</div>
