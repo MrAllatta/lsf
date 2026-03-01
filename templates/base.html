@@ -1,10 +1,12 @@
 {# templates/base.html #}
+{% load static %}
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}Trajectory{% endblock %} — {{ current_planning_year.year }}</title>
+    <title>{% block title %}Farm{% endblock %} — {{ current_planning_year.year }}</title>
     <link rel="stylesheet" href="{% static 'css/farm.css' %}">
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     {% block extra_head %}{% endblock %}
@@ -13,7 +15,7 @@
     
     <nav class="main-nav">
         <div class="nav-brand">
-            <a href="{% url 'core:dashboard' %}">🌱 Trajectory</a>
+            <a href="{% url 'core:dashboard' %}">🌱 Farm</a>
             {% if current_planning_year %}
             <span class="nav-year">{{ current_planning_year.year }}</span>
             <span class="nav-week">Week {{ current_week }}</span>
