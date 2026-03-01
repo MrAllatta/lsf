@@ -8,6 +8,10 @@ from isoweek import Week
 
 from reference.models import Block, BlockType
 from .models import Planting, PlanningYear
+from django.views.generic import DetailView, CreateView, UpdateView
+
+from django.http import HttpResponse
+from django import forms
 
 
 class PlanningMatrixView(TemplateView):
@@ -159,12 +163,6 @@ class PlanningMatrixView(TemplateView):
             return "planting-growing"
         else:
             return "planting-planned"
-
-
-# planning/views.py (additional views for HTMX)
-
-from django.views.generic import DetailView, CreateView, UpdateView
-from django.http import HttpResponse
 
 
 class PlantingDetailView(DetailView):
