@@ -1,4 +1,4 @@
-# core/context_processors.py
+"""core/context_processors.py"""
 
 from datetime import date
 from planning.models import PlanningYear
