@@ -128,6 +128,133 @@ class RevenueProjectionView(TemplateView):
         return ctx
 
 
+class CropPerformanceView(TemplateView):
+    """Per-crop analysis: yield, revenue, $/bedfoot."""
+
+    template_name = "reports/crop_performance.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+
+        year_obj = PlanningYear.objects.filter(status__in=["active", "complete"]).first()
+
+        plantings = (
+            Planting.objects.filter(
+                planning_year=year_obj,
+            )
+            .exclude(status="skipped")
+            .select_related("crop", "crop_season", "block")
+            .prefetch_related(
+                "harvest_events",
+            )
+        )
+
+        # Aggregate by crop
+        crop_data = {}
+
+        for p in plantings:
+            crop_name = p.crop.name
+            if crop_name not in crop_data:
+                crop_data[crop_name] = {
+                    "crop": p.crop,
+                    "crop_season": p.crop_season,
+                    "plantings": [],
+                    "total_planned_bedfeet": 0,
+                    "total_actual_bedfeet": 0,
+                    "total_planned_yield": Decimal("0"),
+                    "total_actual_yield": Decimal("0"),
+                    "harvest_unit": p.crop.harvest_unit,
+                    "weeks_occupied": 0,
+                }
+
+            d = crop_data[crop_name]
+            d["plantings"].append(p)
+            d["total_planned_bedfeet"] += p.planned_bedfeet
+            d["total_actual_bedfeet"] += p.actual_bedfeet or p.planned_bedfeet
+            d["total_planned_yield"] += p.planned_total_yield or Decimal("0")
+
+            # Sum actual harvest
+            actual_sum = p.harvest_events.filter(actual_quantity__isnull=False).aggregate(
+                total=Sum("actual_quantity")
+            )["total"]
+
+            if actual_sum:
+                d["total_actual_yield"] += actual_sum
+
+            # Calculate weeks occupied
+            if p.planned_plant_date and p.planned_last_harvest_date:
+                weeks = (p.planned_last_harvest_date - p.planned_plant_date).days / 7
+                d["weeks_occupied"] = max(d["weeks_occupied"], weeks)
+
+        # Calculate revenue per crop from sales events
+        from sales.models import SalesEvent
+
+        for crop_name, d in crop_data.items():
+            # Find sales formats for this crop
+            formats = CropSalesFormat.objects.filter(crop=d["crop"])
+
+            total_revenue = SalesEvent.objects.filter(
+                product__crop=d["crop"],
+                sale_date__year=year_obj.year,
+                actual_revenue__isnull=False,
+            ).aggregate(total=Sum("actual_revenue"))["total"] or Decimal("0")
+
+            d["total_revenue"] = total_revenue
+
+            bf = d["total_actual_bedfeet"] or d["total_planned_bedfeet"]
+            d["revenue_per_bedfoot"] = total_revenue / bf if bf else Decimal("0")
+
+            d["planned_yield_per_bf"] = (
+                d["total_planned_yield"] / d["total_planned_bedfeet"]
+                if d["total_planned_bedfeet"]
+                else Decimal("0")
+            )
+            d["actual_yield_per_bf"] = (
+                d["total_actual_yield"] / bf if bf and d["total_actual_yield"] else None
+            )
+
+            d["yield_variance_pct"] = None
+            if d["actual_yield_per_bf"] and d["planned_yield_per_bf"]:
+                d["yield_variance_pct"] = (
+                    (d["actual_yield_per_bf"] - d["planned_yield_per_bf"])
+                    / d["planned_yield_per_bf"]
+                    * 100
+                )
+
+            # $/bedfoot/week (penalizes crops that occupy space longer)
+            if d["weeks_occupied"] and d["revenue_per_bedfoot"]:
+                d["revenue_per_bf_per_week"] = d["revenue_per_bedfoot"] / Decimal(
+                    str(d["weeks_occupied"])
+                )
+            else:
+                d["revenue_per_bf_per_week"] = Decimal("0")
+
+        # Sort by $/bedfoot descending
+        performance = sorted(
+            crop_data.values(),
+            key=lambda d: d["revenue_per_bedfoot"],
+            reverse=True,
+        )
+
+        # Summary stats
+        total_revenue = sum(d["total_revenue"] for d in performance)
+        total_bedfeet = sum(
+            d["total_actual_bedfeet"] or d["total_planned_bedfeet"] for d in performance
+        )
+
+        ctx.update(
+            {
+                "year": year_obj,
+                "crops": performance,
+                "total_revenue": total_revenue,
+                "total_bedfeet": total_bedfeet,
+                "avg_revenue_per_bf": (total_revenue / total_bedfeet if total_bedfeet else 0),
+                "num_crops": len(performance),
+            }
+        )
+        return ctx
+
+
 class ChannelPerformanceView(TemplateView):
     """Revenue by channel — weekly, monthly, annual vs target."""
 
