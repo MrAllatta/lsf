@@ -1,0 +1,235 @@
+{# core/dashboard.html #}
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    
+    <div class="dashboard-header">
+        <h1>Week {{ week_num }} — {{ week_monday|date:"F j, Y" }}</h1>
+    </div>
+    
+    {# ── Row 1: Key Metrics ── #}
+    <div class="metric-cards">
+        <div class="metric-card">
+            <div class="metric-label">This Week Revenue</div>
+            <div class="metric-value {% if week_sales >= week_target %}positive{% else %}negative{% endif %}">
+                ${{ week_sales|floatformat:0 }}
+            </div>
+            <div class="metric-sub">Target: ${{ week_target|floatformat:0 }}</div>
+        </div>
+        
+        <div class="metric-card">
+            <div class="metric-label">YTD Revenue</div>
+            <div class="metric-value">${{ ytd_sales|floatformat:0 }}</div>
+            <div class="metric-sub">
+                {{ ytd_pct|floatformat:0 }}% of ${{ annual_target|floatformat:0 }} target
+            </div>
+            <div class="metric-bar">
+                <div class="metric-bar-fill" style="width: {{ ytd_pct }}%"></div>
+            </div>
+        </div>
+        
+        <div class="metric-card">
+            <div class="metric-label">Active Plantings</div>
+            <div class="metric-value">{{ active_plantings }}</div>
+            <div class="metric-sub">
+                {{ status_map.harvesting|default:0 }} harvesting ·
+                {{ status_map.growing|default:0 }} growing ·
+                {{ status_map.planted|default:0 }} establishing
+            </div>
+        </div>
+        
+        <div class="metric-card">
+            <div class="metric-label">Harvest Recording</div>
+            <div class="metric-value">{{ harvest_recorded }} / {{ harvest_count }}</div>
+            <div class="metric-sub">
+                {% if harvest_recorded < harvest_count %}
+                <a href="{% url 'operations:harvest_entry_week' week_num %}">
+                    Record harvests →
+                </a>
+                {% else %}
+                ✓ All recorded
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    {# ── Row 2: This Week Tasks + Next Week ── #}
+    <div class="dashboard-columns">
+        
+        <div class="dashboard-col">
+            <h2>This Week</h2>
+            
+            {# Nursery tasks #}
+            {% if nursery_pending %}
+            <div class="task-section">
+                <h3>🌱 Nursery</h3>
+                {% for ne in nursery_pending %}
+                <div class="task-item">
+                    <span class="task-type">{{ ne.get_event_type_display }}</span>
+                    <span class="task-crop">{{ ne.planting.crop.name }}</span>
+                    {% if ne.planned_tray_count %}
+                    <span class="task-detail">
+                        {{ ne.planned_tray_count }} trays
+                        {% if ne.planned_tray_size %}({{ ne.planned_tray_size }}-cell){% endif %}
+                    </span>
+                    {% endif %}
+                    <span class="task-dest">→ {{ ne.planting.block.name }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            
+            {# Transplants #}
+            {% if transplants_this_week %}
+            <div class="task-section">
+                <h3>🌿 Transplant</h3>
+                {% for ne in transplants_this_week %}
+                <div class="task-item">
+                    <span class="task-crop">{{ ne.planting.crop.name }}</span>
+                    <span class="task-detail">
+                        {{ ne.planting.block.name }}
+                        beds {{ ne.planting.bed_start }}-{{ ne.planting.bed_end }}
+                        · {{ ne.planting.planned_bedfeet }}bf
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            
+            {# Harvest summary #}
+            <div class="task-section">
+                <h3>🥬 Harvest</h3>
+                <p>
+                    {{ harvest_count }} crops to harvest this week.
+                    <a href="{% url 'reports:harvest_list_print' week_num %}">
+                        🖨 Print harvest list
+                    </a>
+                </p>
+                {% if harvest_recorded < harvest_count %}
+                <p>
+                    <a href="{% url 'operations:harvest_entry_week' week_num %}"
+                       class="btn btn-primary">
+                        Record harvests ({{ harvest_recorded }}/{{ harvest_count }} done)
+                    </a>
+                </p>
+                {% endif %}
+            </div>
+            
+            {# Quick links #}
+            <div class="task-section">
+                <h3>📋 Print This Week</h3>
+                <div class="print-links">
+                    <a href="{% url 'reports:harvest_list_print' week_num %}" class="btn">
+                        🖨 Harvest List
+                    </a>
+                    <a href="{% url 'reports:weekly_schedule_print' week_num %}" class="btn">
+                        🖨 Weekly Schedule
+                    </a>
+                    <a href="{% url 'reports:crop_map_print' week_num %}" class="btn">
+                        🖨 Crop Map
+                    </a>
+                    <a href="{% url 'reports:pack_list_print' week_num %}" class="btn">
+                        🖨 Pack List
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="dashboard-col">
+            <h2>Next Week Preview</h2>
+            
+            {% if nursery_next_week %}
+            <div class="task-section">
+                <h3>🌱 Nursery Due</h3>
+                {% for ne in nursery_next_week %}
+                <div class="task-item">
+                    <span class="task-type">{{ ne.get_event_type_display }}</span>
+                    <span class="task-crop">{{ ne.planting.crop.name }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            
+            {% if first_harvests_next %}
+            <div class="task-section">
+                <h3>🆕 First Harvests Starting</h3>
+                {% for p in first_harvests_next %}
+                <div class="task-item">
+                    <span class="task-crop">{{ p.crop.name }}</span>
+                    <span class="task-detail">
+                        {{ p.block.name }} beds {{ p.bed_start }}-{{ p.bed_end }}
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            
+            {% if last_harvests_next %}
+            <div class="task-section">
+                <h3>🏁 Last Harvests Ending</h3>
+                {% for p in last_harvests_next %}
+                <div class="task-item">
+                    <span class="task-crop">{{ p.crop.name }}</span>
+                    <span class="task-detail">
+                        {{ p.block.name }} — beds free after final pick
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            
+            {# Storage inventory warnings #}
+            {% if inventory_warnings %}
+            <div class="task-section">
+                <h3>⚠ Storage Alerts</h3>
+                {% for item in inventory_warnings %}
+                <div class="task-item warning">
+                    <span class="task-crop">{{ item.crop }}</span>
+                    <span class="task-detail">
+                        {{ item.balance|floatformat:0 }} remaining ·
+                        {% if item.weeks_left %}
+                        {{ item.weeks_left }} weeks until expiry
+                        {% else %}
+                        expiry unknown
+                        {% endif %}
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        
+        {# Storage inventory column #}
+        <div class="dashboard-col">
+            <h2>Storage Inventory</h2>
+            {% if inventory_summary %}
+            <table class="compact-table">
+                <tr>
+                    <th>Crop</th>
+                    <th>On Hand</th>
+                    <th>Expires</th>
+                </tr>
+                {% for item in inventory_summary %}
+                <tr {% if item.weeks_left and item.weeks_left < 4 %}class="warning"{% endif %}>
+                    <td>{{ item.crop }}</td>
+                    <td>{{ item.balance|floatformat:0 }}</td>
+                    <td>
+                        {% if item.expiry %}
+                        {{ item.expiry|date:"M j" }}
+                        {% if item.weeks_left %}({{ item.weeks_left }}wk){% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
+            <a href="{% url 'operations:inventory' %}">Full inventory →</a>
+            {% else %}
+            <p class="muted">No storage crops in inventory.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
