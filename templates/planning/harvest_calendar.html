@@ -1,0 +1,128 @@
+{# planning/harvest_calendar.html #}
+{% extends "base.html" %}
+{% load planning_tags humanize %}
+
+{% block title %}Harvest Calendar — {{ year.year }}{% endblock %}
+
+{% block content %}
+<div class="report-header">
+    <h1>Harvest Calendar — {{ year.year }}</h1>
+    <div class="report-meta">
+        {{ total_crops }} crops · availability by week
+    </div>
+</div>
+
+<div style="overflow-x: auto;">
+    <table class="harvest-calendar-table" style="border-collapse:collapse; font-size:0.75rem; width:100%;">
+        <thead>
+            <tr>
+                <th style="text-align:left; padding:4px 8px; position:sticky; left:0; background:#f8f8f5; z-index:5; min-width:140px; border-bottom:2px solid #ccc;">
+                    Crop
+                </th>
+                <th style="text-align:left; padding:4px 6px; position:sticky; left:140px; background:#f8f8f5; z-index:5; min-width:40px; border-bottom:2px solid #ccc;">
+                    Unit
+                </th>
+                {% for wk in weeks %}
+                <th style="padding:2px 1px; text-align:center; min-width:28px; border-bottom:2px solid #ccc;
+                           {% if wk == current_week %}background:#fffde7;{% endif %}
+                           font-size:0.65rem;">
+                    <div>{{ wk }}</div>
+                    {% with w_date=wk|week_to_date:year %}
+                    <div style="color:#999; font-weight:normal;">{{ w_date|date:"M j"|slice:":4" }}</div>
+                    {% endwith %}
+                </th>
+                {% endfor %}
+                <th style="padding:4px 6px; text-align:right; border-bottom:2px solid #ccc; min-width:80px;">
+                    Total
+                </th>
+            </tr>
+        </thead>
+        <tbody>
+            {% regroup crops by crop.crop_type as crop_groups %}
+            {% for group in crop_groups %}
+            
+            {# Crop type section header #}
+            <tr>
+                <td colspan="{{ weeks|length|add:3 }}"
+                    style="background:#f0f0ec; padding:3px 8px; font-weight:600;
+                           font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em;
+                           border-top:2px solid #ccc;">
+                    {{ group.grouper }}
+                </td>
+            </tr>
+            
+            {% for crop_data in group.list %}
+            <tr class="harvest-cal-row">
+                <td style="padding:3px 8px; position:sticky; left:0; background:white;
+                           z-index:3; border-bottom:1px solid #f0f0f0; font-weight:500;">
+                    {{ crop_data.crop.name }}
+                </td>
+                <td style="padding:3px 6px; position:sticky; left:140px; background:white;
+                           z-index:3; border-bottom:1px solid #f0f0f0; color:#999;
+                           font-size:0.7rem;">
+                    {{ crop_data.unit }}
+                </td>
+                {% for wk in weeks %}
+                {% with qty=crop_data.weeks|get_item:wk %}
+                <td style="padding:1px; text-align:center; border-bottom:1px solid #f0f0f0;
+                           {% if wk == current_week %}background:#fffde7;{% endif %}">
+                    {% if qty and qty > 0 %}
+                    <div style="background:{{ crop_data.crop.crop_type|crop_css_color }};
+                                border-radius:2px; padding:1px 2px;
+                                font-size:0.65rem; font-weight:600;
+                                -webkit-print-color-adjust:exact;
+                                print-color-adjust:exact;">
+                        {{ qty|floatformat:0 }}
+                    </div>
+                    {% else %}
+                    <span style="color:#eee;">·</span>
+                    {% endif %}
+                </td>
+                {% endwith %}
+                {% endfor %}
+                <td style="padding:3px 6px; text-align:right; border-bottom:1px solid #f0f0f0;
+                           font-variant-numeric:tabular-nums; font-weight:600;">
+                    {{ crop_data.total|floatformat:0|intcomma }}
+                </td>
+            </tr>
+            {% endfor %}
+            {% endfor %}
+            
+            {# Weekly totals row — count of crops available #}
+            <tr style="border-top:2px solid #ccc; background:#f8f8f5;">
+                <td colspan="2" style="padding:4px 8px; font-weight:bold; position:sticky; left:0; background:#f8f8f5; z-index:3;">
+                    Crops Available
+                </td>
+                {% for wk in weeks %}
+                <td style="padding:2px 1px; text-align:center; font-weight:bold; font-size:0.7rem;
+                           {% if wk == current_week %}background:#fffde7;{% endif %}">
+                    {% with cnt=week_crop_counts|get_item:wk %}
+                    {% if cnt %}
+                    <div style="background:{% if cnt >= 20 %}#22c55e{% elif cnt >= 10 %}#a7f3d0{% else %}#f0f0ec{% endif %};
+                                border-radius:2px; padding:1px;
+                                -webkit-print-color-adjust:exact; print-color-adjust:exact;">
+                        {{ cnt }}
+                    </div>
+                    {% else %}
+                    <span style="color:#ddd;">0</span>
+                    {% endif %}
+                    {% endwith %}
+                </td>
+                {% endfor %}
+                <td style="padding:4px 6px; text-align:right; font-weight:bold;">
+                    {{ total_crops }}
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="no-print" style="margin-top:1rem; font-size:0.85rem; color:#666;">
+    <strong>Reading this table:</strong>
+    Each number is projected harvest quantity for that week.
+    Darker green = more crops available.
+    <a href="{% url 'reports:harvest_list_print' current_week %}">
+        Print this week's harvest list →
+    </a>
+</div>
+{% endblock %}
