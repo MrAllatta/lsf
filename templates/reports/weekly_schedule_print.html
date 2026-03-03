@@ -1,0 +1,147 @@
+{# reports/weekly_schedule_print.html #}
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Weekly Schedule — Week {{ week_num }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/print.css' %}" media="print">
+{% endblock %}
+
+{% block content %}
+<div style="max-width: 900px; margin: 0 auto; padding: 1rem; font-family: 'Courier New', monospace;">
+    
+    <div class="no-print" style="margin-bottom: 1rem;">
+        <button onclick="window.print()" class="btn btn-primary">🖨 Print</button>
+    </div>
+    
+    <h1 style="font-size: 14pt; margin-bottom: 2px;">
+        WEEKLY SCHEDULE — Week {{ week_num }}
+    </h1>
+    <div style="font-size: 10pt; margin-bottom: 1rem;">
+        {{ week_monday|date:"F j" }} – {{ week_sunday|date:"F j, Y" }}
+    </div>
+    
+    {# Day-by-day schedule #}
+    <table style="width: 100%; border-collapse: collapse; font-size: 9pt; margin-bottom: 1rem;">
+        <thead>
+            <tr style="background: #ddd;">
+                <th style="padding: 4px 6px; border: 1px solid #333; width: 12%; text-align: left;">DAY</th>
+                <th style="padding: 4px 6px; border: 1px solid #333; width: 44%; text-align: left;">AM TASKS</th>
+                <th style="padding: 4px 6px; border: 1px solid #333; width: 44%; text-align: left;">PM TASKS / NOTES</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for day in schedule_days %}
+            <tr style="height: {% if day.is_market_day %}60px{% else %}40px{% endif %};">
+                <td style="padding: 4px 6px; border: 1px solid #ccc; font-weight: bold; vertical-align: top;">
+                    {{ day.name }}<br>
+                    <span style="font-weight: normal; font-size: 8pt;">{{ day.date|date:"M j" }}</span>
+                    {% if day.is_market_day %}
+                    <br><span style="font-size: 8pt; font-weight: bold;">📦 MARKET</span>
+                    {% endif %}
+                </td>
+                <td style="padding: 4px 6px; border: 1px solid #ccc; vertical-align: top; font-size: 8pt;">
+                    {% for task in day.am_tasks %}
+                    {{ task }}<br>
+                    {% endfor %}
+                </td>
+                <td style="padding: 4px 6px; border: 1px solid #ccc; vertical-align: top; font-size: 8pt;">
+                    {% for task in day.pm_tasks %}
+                    {{ task }}<br>
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    {# Two-column layout: Nursery + Transplants #}
+    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+        
+        <div style="flex: 1;">
+            <h2 style="font-size: 10pt; border-bottom: 1px solid #333; padding-bottom: 2px; margin-bottom: 4px;">
+                🌱 NURSERY
+            </h2>
+            <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
+                {% for ne in nursery_events %}
+                <tr>
+                    <td style="padding: 2px 4px; border-bottom: 1px solid #eee;">
+                        {{ ne.get_event_type_display|upper }}
+                    </td>
+                    <td style="padding: 2px 4px; border-bottom: 1px solid #eee;">
+                        {{ ne.planting.crop.name }}
+                    </td>
+                    <td style="padding: 2px 4px; border-bottom: 1px solid #eee; text-align: right;">
+                        {% if ne.planned_tray_count %}
+                        {{ ne.planned_tray_count }}×{{ ne.planned_tray_size }}
+                        {% endif %}
+                    </td>
+                    <td style="padding: 2px 4px; border-bottom: 1px solid #eee; width: 30px; text-align: center;">
+                        ☐
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td style="padding: 2px 4px; color: #999; font-style: italic;">None this week</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+        
+        <div style="flex: 1;">
+            <h2 style="font-size: 10pt; border-bottom: 1px solid #333; padding-bottom: 2px; margin-bottom: 4px;">
+                🌿 TRANSPLANTS
+            </h2>
+            <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
+                {% for ne in transplant_events %}
+                <tr>
+                    <td style="padding: 2px 4px; border-bottom: 1px solid #eee;">
+                        {{ ne.planting.crop.name }}
+                    </td>
+                    <td style="padding: 2px 4px; border-bottom: 1px solid #eee;">
+                        {{ ne.planting.block.name }}
+                        b{{ ne.planting.bed_start }}-{{ ne.planting.bed_end }}
+                    </td>
+                    <td style="padding: 2px 4px; border-bottom: 1px solid #eee;">
+                        {{ ne.planting.planned_bedfeet }}bf
+                    </td>
+                    <td style="padding: 2px 4px; border-bottom: 1px solid #eee; width: 30px; text-align: center;">
+                        ☐
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td style="padding: 2px 4px; color: #999; font-style: italic;">None this week</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+    
+    {# Harvest summary #}
+    <div style="margin-bottom: 1rem;">
+        <h2 style="font-size: 10pt; border-bottom: 1px solid #333; padding-bottom: 2px; margin-bottom: 4px;">
+            🥬 HARVEST ({{ harvest_events|length }} crops, est. {{ total_bins }} bins)
+        </h2>
+        <div style="font-size: 8pt; columns: 2; column-gap: 1rem;">
+            {% for he in harvest_events %}
+            <div style="break-inside: avoid; padding: 1px 0; border-bottom: 1px solid #f0f0f0;">
+                {{ he.planting.block.name }}
+                b{{ he.planting.bed_start }}-{{ he.planting.bed_end }}
+                — {{ he.planting.crop.name }}
+                ~{{ he.planned_quantity|floatformat:0 }} {{ he.planned_units }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    
+    {# Notes area #}
+    <div style="border-top: 1px solid #999; padding-top: 0.5rem; font-size: 9pt;">
+        <strong>WEEKLY NOTES:</strong><br>
+        <div style="border: 1px solid #ccc; min-height: 60px; padding: 4px; margin-top: 4px;">
+            &nbsp;
+        </div>
+    </div>
+</div>
+{% endblock %}
