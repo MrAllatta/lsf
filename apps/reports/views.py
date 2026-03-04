@@ -7,7 +7,8 @@ from isoweek import Week
 import math
 
 from planning.models import HarvestEvent, PlanningYear, Planting
-from reference.models import Block
+from sales.models import SalesEvent, QuickSalesEntry
+from reference.models import Block, SalesChannel
 from decimal import Decimal
 
 
