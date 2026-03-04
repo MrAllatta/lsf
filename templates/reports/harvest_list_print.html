@@ -1,0 +1,133 @@
+{# reports/harvest_list_print.html #}
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Harvest List — Week {{ week_num }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/print.css' %}" media="print">
+<style>
+    @media screen {
+        .harvest-list-print {
+            max-width: 900px;
+            margin: 1rem auto;
+            padding: 1rem;
+            font-family: 'Courier New', monospace;
+        }
+        .no-print { display: block; }
+    }
+    @media print {
+        .no-print { display: none !important; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="harvest-list-print">
+    
+    {# Screen-only controls #}
+    <div class="no-print" style="margin-bottom: 1rem;">
+        <a href="{% url 'reports:harvest_list_print' week_num|add:'-1' %}" class="btn">← Wk {{ week_num|add:'-1' }}</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨 Print</button>
+        <a href="{% url 'reports:harvest_list_print' week_num|add:'1' %}" class="btn">Wk {{ week_num|add:'1' }} →</a>
+        <a href="{% url 'operations:harvest_entry_week' week_num %}" class="btn">Enter Actuals</a>
+    </div>
+    
+    {# Document header #}
+    <div style="margin-bottom: 0.5rem;">
+        <h1 
+style="font-size: 14pt; margin-bottom: 2px;">
+            HARVEST LIST — {{ harvest_day|date:"l, F j, Y" }}
+        </h1>
+        <div style="font-size: 10pt;">
+            Week {{ week_num }} ·
+            {{ total_items }} crops ·
+            Est. {{ total_bins }} bins
+        </div>
+    </div>
+    
+    {# Main table #}
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 1rem;">
+        <thead>
+            <tr style="background: #ddd;">
+                <th style="text-align: left; padding: 4px 6px; border: 1px solid #333; width: 25%;">CROP</th>
+                <th style="text-align: left; padding: 4px 6px; border: 1px solid #333; width: 8%;">BLOCK</th>
+                <th style="text-align: left; padding: 4px 6px; border: 1px solid #333; width: 8%;">BEDS</th>
+                <th style="text-align: right; padding: 4px 6px; border: 1px solid #333; width: 14%;">TARGET</th>
+                <th style="text-align: center; padding: 4px 6px; border: 1px solid #333; width: 14%;">BINS</th>
+                <th style="text-align: left; padding: 4px 6px; border: 1px solid #333; width: 10%;">BIN TYPE</th>
+                <th style="text-align: center; padding: 4px 6px; border: 1px solid #333; width: 10%;">ACTUAL</th>
+                <th style="text-align: left; padding: 4px 6px; border: 1px solid #333; width: 11%;">NOTES</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td style="padding: 4px 6px; border: 1px solid #ccc; font-weight: {% if item.bins_needed and item.bins_needed > 2 %}bold{% else %}normal{% endif %};">
+                    {{ item.crop }}
+                </td>
+                <td style="padding: 4px 6px; border: 1px solid #ccc;">{{ item.block }}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ccc;">{{ item.beds }}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ccc; text-align: right;">
+                    {{ item.target_qty|floatformat:0 }} {{ item.units }}
+                </td>
+                <td style="padding: 4px 6px; border: 1px solid #ccc; text-align: center;">
+                    {% if item.bins_needed %}
+                    ~{{ item.bins_needed|floatformat:1 }}
+                    {% else %}
+                    count
+                    {% endif %}
+                </td>
+                <td style="padding: 4px 6px; border: 1px solid #ccc; font-size: 9pt;">
+                    {{ item.bin_type|default:"" }}
+                </td>
+                <td style="padding: 4px 6px; border: 1px solid #ccc; text-align: center;">
+                    {# Blank for handwriting #}
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                </td>
+                <td style="padding: 4px 6px; border: 1px solid #ccc; font-size: 9pt;">
+                    &nbsp;
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="8" style="padding: 8px; text-align: center; color: #666;">
+                    No harvest events planned for Week {{ week_num }}.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    {# Bin summary #}
+    <div style="display: flex; gap: 2rem; margin-bottom: 1rem; font-size: 10pt;">
+        <div>
+            <strong>BIN SUMMARY:</strong>
+            {% for bin_type, count in bin_totals %}
+            {{ count }} {{ bin_type }}{% if not forloop.last %} · {% endif %}
+            {% endfor %}
+            · Total: {{ total_bins }}
+        </div>
+    </div>
+    
+    {# Tools needed #}
+    {% if tools_needed %}
+    <div style="font-size: 10pt; margin-bottom: 0.5rem;">
+        <strong>TOOLS:</strong>
+        {% for tool in tools_needed %}{{ tool }}{% if not forloop.last %}, {% endif %}{% endfor %}
+    </div>
+    {% endif %}
+    
+    {# Sign-off area #}
+    <div style="border-top: 1px solid #999; padding-top: 0.5rem; margin-top: 0.5rem; font-size: 10pt;">
+        <div style="display: flex; gap: 3rem;">
+            <span>Crew: _______________________</span>
+            <span>Start: ___________</span>
+            <span>End: ___________</span>
+        </div>
+        <div style="margin-top: 4px;">
+            Notes: ______________________________________________________________________
+        </div>
+    </div>
+</div>
+{% endblock %}
