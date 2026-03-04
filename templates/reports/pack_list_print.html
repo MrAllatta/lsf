@@ -1,0 +1,143 @@
+{# reports/pack_list_print.html #}
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Pack List — Week {{ week_num }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/print.css' %}" media="print">
+{% endblock %}
+
+{% block content %}
+<div class="pack-list-print" style="max-width: 1100px; margin: 0 auto; padding: 1rem;">
+    
+    <div class="no-print" style="margin-bottom: 1rem;">
+        <button onclick="window.print()" class="btn btn-primary">🖨 Print</button>
+        <a href="{% url 'operations:harvest_entry_week' week_num %}" class="btn">← Harvest Entry</a>
+        <a href="{% url 'sales:market_entry' %}" class="btn">Sales Entry →</a>
+    </div>
+    
+    <h1 style="font-size: 14pt; margin-bottom: 2px;">
+        PACK LIST — {{ pack_date|date:"l, F j, Y" }}
+    </h1>
+    <div style="font-size: 10pt; margin-bottom: 0.75rem;">
+        Week {{ week_num }} ·
+        Packing for: {% for ch in channels %}{{ ch.name }}{% if not forloop.last %} + {% endif %}{% endfor %}
+    </div>
+    
+    <table style="width: 100%; border-collapse: collapse; font-size: 10pt;">
+        <thead>
+            <tr style="background: #ddd;">
+                <th style="text-align: left; padding: 4px 6px; border: 1px solid #333; width: 22%;">PRODUCT</th>
+                <th style="text-align: right; padding: 4px 6px; border: 1px solid #333; width: 8%;">PRICE</th>
+                <th style="text-align: right; padding: 4px 6px; border: 1px solid #333; width: 10%;">HARVESTED</th>
+                {% for ch in channels %}
+                <th style="text-align: center; padding: 4px 6px; border: 1px solid #333; width: 10%;">
+                    {{ ch.name|upper }}
+                </th>
+                {% endfor %}
+                <th style="text-align: center; padding: 4px 6px; border: 1px solid #333; width: 8%;">W/S</th>
+                <th style="text-align: center; padding: 4px 6px; border: 1px solid #333; width: 5%;">✓</th>
+            </tr>
+        </thead>
+        <tbody>
+            {# Fresh harvest items #}
+            {% for item in fresh_items %}
+            <tr>
+                <td style="padding: 3px 6px; border: 1px solid #ccc;">
+                    {{ item.product_name }}
+                </td>
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: right;">
+                    ${{ item.price|floatformat:2 }}
+                </td>
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: right;">
+                    {{ item.harvested|floatformat:0 }} {{ item.unit }}
+                </td>
+                {% for ch in channels %}
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: center; font-weight: bold;">
+                    {{ item.channel_qtys|get_item:ch.id|floatformat:0|default:"—" }}
+                </td>
+                {% endfor %}
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: center;">
+                    {{ item.wholesale_qty|floatformat:0|default:"—" }}
+                </td>
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: center;">
+                    &nbsp;
+                </td>
+            </tr>
+            {% endfor %}
+            
+            {# Storage items divider #}
+            {% if storage_items %}
+            <tr>
+                <td colspan="{{ channels|length|add:'5' }}"
+                    style="background: #eee; padding: 3px 6px; 
+                           font-weight: bold; font-size: 9pt;
+                           border: 1px solid #ccc;">
+                    FROM STORAGE (on hand in cooler/storage)
+                </td>
+            </tr>
+            {% for item in storage_items %}
+            <tr>
+                <td style="padding: 3px 6px; border: 1px solid #ccc;">
+                    {{ item.product_name }}
+                </td>
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: right;">
+                    ${{ item.price|floatformat:2 }}
+                </td>
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: right; color: #666;">
+                    {{ item.on_hand|floatformat:0 }} {{ item.unit }} on hand
+                </td>
+                {% for ch in channels %}
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: center; font-weight: bold;">
+                    {{ item.channel_qtys|get_item:ch.id|floatformat:0|default:"—" }}
+                </td>
+                {% endfor %}
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: center;">
+                    {{ item.wholesale_qty|floatformat:0|default:"—" }}
+                </td>
+                <td style="padding: 3px 6px; border: 1px solid #ccc; text-align: center;">
+                    &nbsp;
+                </td>
+            </tr>
+            {% endfor %}
+            {% endif %}
+            
+            {# Totals row #}
+            <tr style="font-weight: bold; border-top: 2px solid #333; background: #f8f8f5;">
+                <td colspan="3" style="padding: 4px 6px; border: 1px solid #ccc;">
+                    PROJECTED REVENUE
+                </td>
+                {% for ch in channels %}
+                <td style="padding: 4px 6px; border: 1px solid #ccc; text-align: center;">
+                    ${{ projected_revenue|get_item:ch.id|floatformat:0|default:"0" }}
+                    <br>
+                    <small style="font-weight: normal; font-size: 8pt;">
+                        target: ${{ ch.weekly_target|floatformat:0 }}
+                    </small>
+                </td>
+                {% endfor %}
+                <td colspan="2" style="padding: 4px 6px; border: 1px solid #ccc;"></td>
+            </tr>
+        </tbody>
+    </table>
+    
+    {# Loading instructions #}
+    <div style="margin-top: 0.75rem; font-size: 9pt; border-top: 1px solid #999; padding-top: 0.5rem;">
+        <div style="display: flex; gap: 3rem;">
+            <div>
+                <strong>LOAD ORDER:</strong>
+                {% for ch in channels %}
+                {{ ch.name }}{% if not forloop.last %} → {% endif %}
+                {% endfor %}
+            </div>
+            <div>
+                Packed by: _______________________
+            </div>
+            <div>
+                Time: ___________
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
