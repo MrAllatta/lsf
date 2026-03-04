@@ -26,6 +26,7 @@ urlpatterns = [
     ),
     # Succession
     path("succession/new/", views.SuccessionCreateView.as_view(), name="succession_create"),
+    path("succession/preview", views.SuccessionPreviewView.as_view(), name="succession_preview"),
     # Schedules
     path("nursery/", views.NurseryScheduleView.as_view(), name="nursery_schedule"),
     path("nursery/week/<int:week>/", views.NurseryScheduleView.as_view(), name="nursery_week"),
