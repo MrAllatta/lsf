@@ -1,0 +1,247 @@
+{# planning/planting_form.html — used for both create and HTMX partial #}
+{% load planning_tags %}
+
+<div class="planting-form {% if is_htmx %}htmx-form{% endif %}">
+    
+    <div class="form-header">
+        {% if object %}
+        <h2>Edit Planting</h2>
+        {% else %}
+        <h2>New Planting</h2>
+        {% endif %}
+        {% if is_htmx %}
+        <button type="button" onclick="document.getElementById('planting-detail').style.display='none'"
+                class="btn" style="float: right;">✕</button>
+        {% endif %}
+    </div>
+    
+    <form method="post"
+          {% if is_htmx %}
+          hx-post="{{ request.path }}"
+          hx-target="#planting-detail"
+          hx-swap="innerHTML"
+          {% endif %}>
+        {% csrf_token %}
+        
+        {# Crop selection — the most important field #}
+        <div class="form-group">
+            <label for="id_crop">Crop *</label>
+            <select name="crop" id="id_crop" required
+                    hx-get="{% url 'planning:crop_season_options' %}"
+                    hx-target="#id_crop_season"
+                    hx-trigger="change"
+                    hx-include="[name='block']">
+                <option value="">— select crop —</option>
+                {% regroup crop_choices by crop_type as crop_groups %}
+                {% for group in crop_groups %}
+                <optgroup label="{{ group.grouper }}">
+                    {% for crop in group.list %}
+                    <option value="{{ crop.id }}"
+                            {% if form.crop.value == crop.id|stringformat:"s" %}selected{% endif %}>
+                        {{ crop.name }}
+                    </option>
+                    {% endfor %}
+                </optgroup>
+                {% endfor %}
+            </select>
+        </div>
+        
+        {# Block selection — drives crop_season options #}
+        <div class="form-row">
+            <div class="form-group">
+                <label for="id_block">Block *</label>
+                <select name="block" id="id_block" required
+                        hx-get="{% url 'planning:crop_season_options' %}"
+                        hx-target="#id_crop_season"
+                        hx-trigger="change"
+                        hx-include="[name='crop']">
+                    {% regroup block_choices by block_type as block_groups %}
+                    {% for group in block_groups %}
+                    <optgroup label="{{ group.grouper|title }}">
+                        {% for block in group.list %}
+                        <option value="{{ block.id }}"
+                                {% if form.block.value == block.id|stringformat:"s" %}selected{% endif %}>
+                            {{ block.name }} ({{ block.num_beds }} beds)
+                        </option>
+                        {% endfor %}
+                    </optgroup>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="id_crop_season">Season Profile *</label>
+                <select name="crop_season" id="id_crop_season" required>
+                    {% if crop_season_choices %}
+                    {% for cs in crop_season_choices %}
+                    <option value="{{ cs.id }}"
+                            {% if form.crop_season.value == cs.id|stringformat:"s" %}selected{% endif %}>
+                        {{ cs.get_block_type_display }}
+                        — DTM {{ cs.dtm_days }}d
+                        · {{ cs.harvest_weeks }}wk harvest
+                        · {{ cs.total_yield_per_bedfoot }}{{ crop.harvest_unit }}/bf
+                    </option>
+                    {% endfor %}
+                    {% else %}
+                    <option value="">— select crop and block first —</option>
+                    {% endif %}
+                </select>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label for="id_variety">Variety (optional)</label>
+            <input type="text" name="variety" id="id_variety"
+                   value="{{ form.variety.value|default:'' }}"
+                   placeholder="e.g. Sun Gold, Waltham Butternut">
+        </div>
+        
+        {# Bed assignment #}
+        <div class="form-row">
+            <div class="form-group">
+                <label for="id_bed_start">Bed Start *</label>
+                <input type="number" name="bed_start" id="id_bed_start"
+                       value="{{ form.bed_start.value|default:1 }}"
+                       min="1" required
+                       hx-get="{% url 'planning:bedfeet_calc' %}"
+                       hx-target="#calc-bedfeet"
+                       hx-trigger="change"
+                       hx-include="[name='block'],[name='bed_end']">
+            </div>
+            <div class="form-group">
+                <label for="id_bed_end">Bed End *</label>
+                <input type="number" name="bed_end" id="id_bed_end"
+                       value="{{ form.bed_end.value|default:'' }}"
+
+#+begin_src html
+{# planning/planting_form.html (continued) #}
+
+                       min="1" required
+                       hx-get="{% url 'planning:bedfeet_calc' %}"
+                       hx-target="#calc-bedfeet"
+                       hx-trigger="change"
+                       hx-include="[name='block'],[name='bed_start']">
+            </div>
+        </div>
+        
+        {# Live-calculated bedfeet display #}
+        <div id="calc-bedfeet" class="form-calculated">
+            {% if form.bed_start.value and form.bed_end.value and selected_block %}
+            {% with beds=form.bed_end.value|add:"0"|add:"-"|add:form.bed_start.value %}
+            <dt>Bedfeet:</dt>
+            <dd>{{ planned_bedfeet }} bf</dd>
+            <dt>Planned yield:</dt>
+            <dd>{{ planned_yield|floatformat:0 }} {{ crop.harvest_unit }}</dd>
+            {% endwith %}
+            {% else %}
+            <span class="muted">Select block and beds to see calculated bedfeet.</span>
+            {% endif %}
+        </div>
+        
+        {# Plant date #}
+        <div class="form-group">
+            <label for="id_planned_plant_date">Plant Date *</label>
+            <input type="date" name="planned_plant_date" id="id_planned_plant_date"
+                   value="{{ form.planned_plant_date.value|default:'' }}"
+                   required
+                   hx-get="{% url 'planning:harvest_date_calc' %}"
+                   hx-target="#calc-dates"
+                   hx-trigger="change"
+                   hx-include="[name='crop_season']">
+            <div class="help-text">
+                Or enter week number:
+                <input type="number" name="plant_week_input" id="plant_week_input"
+                       min="1" max="52" style="width: 60px;"
+                       placeholder="wk"
+                       hx-get="{% url 'planning:week_to_date' %}"
+                       hx-target="#id_planned_plant_date"
+                       hx-trigger="change"
+                       hx-include="this">
+            </div>
+        </div>
+        
+        {# Live-calculated harvest window #}
+        <div id="calc-dates" class="form-calculated">
+            {% if calculated_first_harvest %}
+            <dt>First harvest:</dt>
+            <dd>{{ calculated_first_harvest|date:"M j" }} (Wk {{ calculated_first_harvest|date:"W" }})</dd>
+            <dt>Last harvest:</dt>
+            <dd>{{ calculated_last_harvest|date:"M j" }} (Wk {{ calculated_last_harvest|date:"W" }})</dd>
+            {% if crop.nursery_weeks %}
+            <dt>Seed date:</dt>
+            <dd>{{ calculated_seed_date|date:"M j" }} (Wk {{ calculated_seed_date|date:"W" }})</dd>
+            {% endif %}
+            {% else %}
+            <span class="muted">Select crop season and plant date to see harvest window.</span>
+            {% endif %}
+        </div>
+        
+        {# Succession group (optional) #}
+        <div class="form-group">
+            <label for="id_succession_group">Succession Group (optional)</label>
+            <input type="text" name="succession_group" id="id_succession_group"
+                   value="{{ form.succession_group.value|default:'' }}"
+                   placeholder="e.g. Lettuce-B1-2024">
+            <div class="help-text">
+                Leave blank for standalone plantings.
+                Auto-set when created via Succession tool.
+            </div>
+        </div>
+        
+        {# Notes #}
+        <div class="form-group">
+            <label for="id_notes">Notes</label>
+            <textarea name="notes" id="id_notes" rows="3"
+                      placeholder="Variety source, special instructions, observations...">{{ form.notes.value|default:'' }}</textarea>
+        </div>
+        
+        {# Rotation check — shown if we have data #}
+        {% if rotation_warning %}
+        <div class="warning">
+            ⚠ <strong>Rotation Warning:</strong>
+            {{ selected_crop.botanical_family }} was last in
+            {{ selected_block.name }} in {{ rotation_last_year }}
+            ({{ rotation_gap }}yr gap, minimum {{ rotation_min }}yr required).
+            <br>
+            Consider a different block or accept and note the reason.
+            <label style="margin-top: 4px; display: block;">
+                <input type="checkbox" name="accept_rotation_warning" value="1">
+                I acknowledge this rotation concern and am proceeding anyway.
+            </label>
+        </div>
+        {% endif %}
+        
+        {# Bed conflict check — shown if beds overlap existing planting #}
+        {% if bed_conflicts %}
+        <div class="warning">
+            ⚠ <strong>Bed Conflict:</strong> These beds overlap with:
+            {% for conflict in bed_conflicts %}
+            <br>· {{ conflict.crop.name }} ({{ conflict.status }})
+            beds {{ conflict.bed_start }}-{{ conflict.bed_end }},
+            {{ conflict.planned_plant_date|date:"M j" }} –
+            {{ conflict.planned_last_harvest_date|date:"M j" }}
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        {# Form actions #}
+        <div class="detail-actions">
+            <button type="submit" class="btn btn-primary">
+                {% if object %}Save Changes{% else %}Create Planting{% endif %}
+            </button>
+            {% if object %}
+            <a href="{% url 'planning:planting_detail' object.id %}" class="btn">
+                Cancel
+            </a>
+            <a href="{% url 'planning:planting_revise' object.id %}"
+               class="btn btn-warning">
+                Revise (keep original)
+            </a>
+            {% else %}
+            <a href="{% url 'planning:succession_create' %}" class="btn">
+                Multiple Successions →
+            </a>
+            {% endif %}
+        </div>
+    </form>
+</div>
