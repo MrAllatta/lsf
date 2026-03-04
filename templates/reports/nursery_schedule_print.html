@@ -1,0 +1,129 @@
+{# reports/nursery_schedule_print.html #}
+{% extends "base.html" %}
+
+{% block title %}Nursery Schedule — {{ year.year }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/print.css' %}" media="print">
+{% endblock %}
+
+{% block content %}
+<div style="max-width: 1000px; margin: 0 auto; padding: 1rem; font-family: 'Courier New', monospace;">
+    
+    <div class="no-print" style="margin-bottom: 1rem;">
+        <button onclick="window.print()" class="btn btn-primary">🖨 Print Full Nursery Schedule</button>
+    </div>
+    
+    <h1 style="font-size: 14pt; margin-bottom: 2px;">
+        NURSERY SCHEDULE — {{ year.year }}
+    </h1>
+    <div style="font-size: 9pt; margin-bottom: 0.75rem; color: #666;">
+        Generated {{ today|date:"F j, Y" }}
+        · Greenhouse capacity: {{ greenhouse_capacity }} trays
+        · Peak: {{ peak_week.trays }} trays (Week {{ peak_week.week }})
+    </div>
+    
+    {# Capacity bar chart (simplified text version) #}
+    <div style="margin-bottom: 0.75rem; font-size: 8pt;">
+        <strong>BENCH LOAD BY WEEK (each █ = 10 trays)</strong>
+        <div style="font-family: monospace; margin-top: 2px;">
+            {% for wk in bench_by_week %}
+            {% if wk.trays > 0 %}
+            <div style="display: flex; align-items: center; gap: 4px; line-height: 1.2;">
+                <span style="width: 20px; text-align: right;">{{ wk.week }}</span>
+                <span>{% for i in wk.trays|divisibleby:10|default:1 %}█{% endfor %}
+                      {{ wk.trays }}{% if wk.over_capacity %} ⚠{% endif %}</span>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    
+    {# Main schedule table #}
+    <table style="width: 100%; border-collapse: collapse; font-size: 8.5pt;">
+        <thead>
+            <tr style="background: #ddd;">
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: center; width: 5%;">WK</th>
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: left; width: 10%;">DATE</th>
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: left; width: 5%;">TYPE</th>
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: left; width: 22%;">CROP</th>
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: left; width: 10%;">DEST BLOCK</th>
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: center; width: 7%;">TRAYS</th>
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: center; width: 7%;">SIZE</th>
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: center; width: 8%;">PLANT DATE</th>
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: center; width: 5%;">DONE</th>
+                <th style="padding: 3px 5px; border: 1px solid #333; text-align: left; width: 21%;">NOTES</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for wk_data in all_nursery_weeks %}
+            {% if wk_data.events %}
+            {# Week section header #}
+            <tr style="background: #f0f0ec;">
+                <td colspan="10" style="padding: 2px 5px; border: 1px solid #ccc; font-weight: bold; font-size: 8pt;">
+                    WEEK {{ wk_data.week_num }} — {{ wk_data.monday|date:"F j, Y" }}
+                    · {{ wk_data.bench_trays }} trays on bench
+                    {% if wk_data.bench_trays > greenhouse_capacity %}
+                    ⚠ OVER CAPACITY
+                    {% endif %}
+                </td>
+            </tr>
+            {% for ne in wk_data.events %}
+            <tr>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0; text-align: center;">
+                    {{ wk_data.week_num }}
+                </td>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0;">
+                    {{ ne.planned_date|date:"M j" }}
+                </td>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0; font-weight: bold;">
+                    {{ ne.get_event_type_display|slice:":4"|upper }}
+                </td>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0;">
+                    {{ ne.planting.crop.name }}
+                    {% if ne.planting.variety %}
+                    <br><span style="font-size: 7.5pt; color: #666;">{{ ne.planting.variety }}</span>
+                    {% endif %}
+                </td>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0;">
+                    {{ ne.planting.block.name }}
+                    b{{ ne.planting.bed_start }}-{{ ne.planting.bed_end }}
+                </td>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0; text-align: center;">
+                    {{ ne.planned_tray_count|default:"—" }}
+                </td>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0; text-align: center;">
+                    {% if ne.planned_tray_size %}{{ ne.planned_tray_size }}-cell{% else %}—{% endif %}
+                </td>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0; text-align: center;">
+                    {{ ne.planting.planned_plant_date|date:"M j" }}
+                    <br>
+                    <span style="font-size: 7.5pt; color: #666;">Wk {{ ne.planting.planned_plant_date|date:"W" }}</span>
+                </td>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0; text-align: center;">
+                    {% if ne.actual_date %}
+                    <span style="color: #166534;">✓ {{ ne.actual_date|date:"M j" }}</span>
+                    {% else %}
+                    ☐
+                    {% endif %}
+                </td>
+                <td style="padding: 2px 5px; border: 1px solid #e0e0e0; font-size: 7.5pt; color: #444;">
+                    {{ ne.notes|default:"" }}
+                </td>
+            </tr>
+            {% endfor %}
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    {# Summary at bottom #}
+    <div style="margin-top: 0.75rem; font-size: 8.5pt; border-top: 1px solid #999; padding-top: 0.5rem;">
+        <strong>SEASON TOTALS:</strong>
+        Seed events: {{ total_seed_events }}
+        · Pot-up events: {{ total_potup_events }}
+        · Transplant events: {{ total_transplant_events }}
+        · Peak bench load: {{ peak_week.trays }} trays (Week {{ peak_week.week }})
+    </div>
+</div>
+{% endblock %}
