@@ -1,13 +1,14 @@
 # operations/views.py
 
 from django.views.generic import TemplateView, FormView
-from django.db.models import Q
+from django.db.models import Q, Max, Subquery, OuterRef
 from datetime import date, timedelta
 from isoweek import Week
 from django import forms
 from reference.models import CropInfo
-
+from operations.models import InventoryLedger
 from planning.models import Planting, HarvestEvent, PlanningYear
+from decimal import Decimal
 
 
 class InventoryHarvestInView(TemplateView):
@@ -403,7 +404,6 @@ class FieldWalkView(TemplateView):
         )
 
         # Get most recent field walk note for each planting
-        from django.db.models import Max, Subquery, OuterRef
 
         latest_notes = {}
         for p in plantings:
