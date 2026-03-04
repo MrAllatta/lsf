@@ -8,6 +8,7 @@ import math
 
 from planning.models import HarvestEvent, PlanningYear, Planting
 from reference.models import Block
+from decimal import Decimal
 
 
 class WeeklySchedulePrintView(TemplateView):
