@@ -1,5 +1,5 @@
 """
-URL configuration for long_season_farm project.
+URL configuration for farm project.
 
 The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/6.0/topics/http/urls/
@@ -17,9 +17,12 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path, include
-from planning import urls as purls
 
 urlpatterns = [
+    path("", include("core.urls")),
+    path("planning/", include("planning.urls")),
+    path("reports/", include("reports.urls")),
+    path("sales/", include("sales.urls")),
+    path("operations", include("operations.urls")),
     path("admin/", admin.site.urls),
-    path("planning/", include(purls)),
 ]
