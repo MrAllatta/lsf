@@ -1,4 +1,4 @@
-"""planning/admin.py"""
+"""planning.admin"""
 
 from django.contrib import admin
 from .models import PlanningYear, Planting, NurseryEvent, HarvestEvent
@@ -100,3 +100,14 @@ class PlantingAdmin(admin.ModelAdmin):
         return f"Wk {start}-{end}"
 
     planned_harvest_range.short_description = "Harvest"
+
+
+@admin.register(PlanningYear)
+class PlanningYearAdmin(admin.ModelAdmin):
+    model = PlanningYear
+    extra = 0
+    fields = [
+        "year",
+        "status",
+        "overplant_factor",
+    ]
