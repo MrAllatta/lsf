@@ -1,6 +1,5 @@
 {# templates/base.html #}
 {% load static %}
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -82,7 +81,7 @@
     </main>
     
     <footer class="main-footer">
-        <span>Trajectory {{ current_planning_year.year }}</span>
+        <span>Farm {{ current_planning_year.year }}</span>
         <span>·</span>
         <span>{{ today|date:"l, F j" }} · Week {{ current_week }}</span>
     </footer>
