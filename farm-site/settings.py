@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.humanize",
     # Third party
     "django_htmx",
     # Database
@@ -54,9 +55,9 @@ INSTALLED_APPS = [
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ.get("DB_NAME", "lsf_db"),
-        "USER": os.environ.get("DB_USER", "lsf_dev"),
-        "PASSWORD": os.environ.get("DB_PASSWORD", "lsf_dev"),
+        "NAME": os.environ.get("DB_NAME", "farm_db"),
+        "USER": os.environ.get("DB_USER", "farm_dev"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", "farm_dev"),
         "HOST": os.environ.get("DB_HOST", "localhost"),
         "PORT": os.environ.get("DB_PORT", "5432"),
     }
