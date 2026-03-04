@@ -40,7 +40,8 @@
                 <th style="min-width:80px;">Revenue Bar</th>
             </tr>
         </thead>
-        <tbody>
+	{% endblock %}
+{% comment %}        <tbody>
             {% for crop_data in crops %}
             <tr>
                 <td class="num muted">{{ forloop.counter }}</td>
@@ -96,10 +97,11 @@
                     {% endif %}
                 </td>
                 <td>
-                    {% if crop_data.total_revenue and total_revenue %}
+{#                    {% if crop_data.total_revenue and total_revenue %}   #}
                     <div style="background:#e5e7eb; height:8px; border-radius:4px; overflow:hidden; width:80px;">
 		</td>
 	    </tr>
 	</tbody>
 
 			/*UNFINISHED*/
+{% endcomment %}
