@@ -1,4 +1,4 @@
-"""planning/views.py"""
+"""planning.views"""
 
 from django.shortcuts import render
 from django.views.generic import TemplateView
@@ -7,11 +7,13 @@ from datetime import date
 from isoweek import Week
 
 from reference.models import Block, BlockType
-from .models import Planting, PlanningYear
+from .models import Planting, PlanningYear, Planting
 from django.views.generic import DetailView, CreateView, UpdateView
 
 from django.http import HttpResponse
 from django import forms
+from django.template.loader import render_to_string
+from datetime import date, timedelta
 
 
 class PlanningMatrixView(TemplateView):
@@ -273,3 +275,893 @@ class PlantingCreateView(CreateView):
                 },
             )
         return redirect("planning:matrix")
+
+
+class SuccessionPreviewView(View):
+    """HTMX: show a preview table of what successions will be created."""
+
+    def get(self, request):
+        try:
+            first_week = int(request.GET.get("first_plant_week", 0))
+            last_week = int(request.GET.get("last_plant_week", 0))
+            interval = int(request.GET.get("interval_weeks", 2))
+            bf_per = int(request.GET.get("bedfeet_per_succession", 0))
+            crop_id = request.GET.get("crop")
+            block_id = request.GET.get("block")
+            block_type = request.GET.get("block_type", "field")
+            reuse = request.GET.get("reuse_beds") == "on"
+        except (ValueError, TypeError):
+            return HttpResponse('<span class="muted">Fill in valid values to preview.</span>')
+
+        if not all([first_week, last_week, interval, bf_per, crop_id, block_id]):
+            return HttpResponse(
+                '<span class="muted">Fill in all required fields to preview.</span>'
+            )
+
+        if last_week < first_week or interval < 1:
+            return HttpResponse('<span style="color:red;">Invalid week range or interval.</span>')
+
+        try:
+            crop = CropInfo.objects.get(id=crop_id)
+            block = Block.objects.get(id=block_id)
+            cs = CropBySeason.objects.get(crop=crop, block_type=block_type)
+        except (CropInfo.DoesNotExist, Block.DoesNotExist, CropBySeason.DoesNotExist):
+            return HttpResponse(
+                '<span style="color:red;">'
+                "No season profile found for this crop/block type combination."
+                "</span>"
+            )
+
+        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+        year = year_obj.year if year_obj else date.today().year
+
+        beds_per = math.ceil(bf_per / block.bedfeet_per_bed)
+
+        # Generate succession list
+        successions = []
+        current_week = first_week
+        num = 1
+
+        while current_week <= last_week:
+            plant_date = Week(year, current_week).monday()
+            first_harvest = plant_date + timedelta(days=cs.dtm_days)
+            last_harvest = first_harvest + timedelta(weeks=cs.harvest_weeks - 1)
+
+            successions.append(
+                {
+                    "num": num,
+                    "plant_week": current_week,
+                    "plant_date": plant_date,
+                    "harvest_start": first_harvest,
+                    "harvest_start_week": first_harvest.isocalendar()[1],
+                    "harvest_end": last_harvest,
+                    "harvest_end_week": last_harvest.isocalendar()[1],
+                }
+            )
+
+            current_week += interval
+            num += 1
+
+        # Assign beds (simplified preview)
+        view = SuccessionCreateView()
+        if reuse:
+            successions = view._assign_beds_with_reuse(successions, block, beds_per, cs)
+        else:
+            successions = view._assign_beds_sequential(successions, block, beds_per)
+
+        # Check capacity
+        max_bed = max((s.get("bed_end", 0) for s in successions), default=0)
+        over_capacity = max_bed > block.num_beds
+
+        # Calculate totals
+        total_bedfeet = len(successions) * bf_per
+        total_yield = total_bedfeet * float(cs.total_yield_per_bedfoot)
+
+        # Build preview HTML
+        lines = [
+            f'<div style="font-weight: bold; margin-bottom: 0.5rem;">'
+            f"{len(successions)} successions · {total_bedfeet:,} total bedfeet · "
+            f"~{total_yield:,.0f} {crop.harvest_unit} projected</div>"
+        ]
+
+        if over_capacity:
+            lines.append(
+                f'<div style="color: red; margin-bottom: 0.5rem;">'
+                f"⚠ Requires bed {max_bed} but {block.name} has {block.num_beds} beds. "
+                f"Enable bed reuse or reduce bedfeet per succession.</div>"
+            )
+
+        lines.append(
+            '<table style="width:100%; border-collapse:collapse; font-size:0.8rem;">'
+            '<thead><tr style="background:#eee;">'
+            '<th style="padding:3px 6px;border:1px solid #ccc;">#</th>'
+            '<th style="padding:3px 6px;border:1px solid #ccc;">Plant</th>'
+            '<th style="padding:3px 6px;border:1px solid #ccc;">Beds</th>'
+            '<th style="padding:3px 6px;border:1px solid #ccc;">First Harvest</th>'
+            '<th style="padding:3px 6px;border:1px solid #ccc;">Last Harvest</th>'
+            '<th style="padding:3px 6px;border:1px solid #ccc;">Yield</th>'
+            "</tr></thead><tbody>"
+        )
+
+        for s in successions:
+            bed_str = f"b{s.get('bed_start','?')}-{s.get('bed_end','?')}"
+            over = s.get("bed_end", 0) > block.num_beds
+            row_style = "background:#fff0f0;" if over else ""
+
+            lines.append(
+                f'<tr style="{row_style}">'
+                f'<td style="padding:2px 6px;border:1px solid #e0e0e0;text-align:center;">{s["num"]}</td>'
+                f'<td style="padding:2px 6px;border:1px solid #e0e0e0;">'
+                f'Wk {s["plant_week"]} · {s["plant_date"].strftime("%b %-d")}</td>'
+                f'<td style="padding:2px 6px;border:1px solid #e0e0e0;">{bed_str}</td>'
+                f'<td style="padding:2px 6px;border:1px solid #e0e0e0;">'
+                f'Wk {s["harvest_start_week"]} · {s["harvest_start"].strftime("%b %-d")}</td>'
+                f'<td style="padding:2px 6px;border:1px solid #e0e0e0;">'
+                f'Wk {s["harvest_end_week"]} · {s["harvest_end"].strftime("%b %-d")}</td>'
+                f'<td style="padding:2px 6px;border:1px solid #e0e0e0;text-align:right;">'
+                f"~{bf_per * float(cs.total_yield_per_bedfoot):,.0f} {crop.harvest_unit}</td>"
+                f"</tr>"
+            )
+
+        lines.append("</tbody></table>")
+
+        return HttpResponse("".join(lines))
+
+
+class NurseryScheduleView(TemplateView):
+    """Weekly nursery task view — seeding, pot up, transplant."""
+
+    template_name = "planning/nursery_schedule.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+
+        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+        year = year_obj.year
+
+        requested_week = kwargs.get("week")
+        if requested_week:
+            center_week = requested_week
+        else:
+            center_week = date.today().isocalendar()[1]
+
+        # Show 4-week window
+        week_start = max(1, center_week - 1)
+        week_end = min(52, week_start + 3)
+
+        weeks_data = []
+
+        for wk in range(week_start, week_end + 1):
+            monday = Week(year, wk).monday()
+            sunday = monday + timedelta(days=6)
+
+            events = (
+                NurseryEvent.objects.filter(
+                    planting__planning_year=year_obj,
+                    planned_date__gte=monday,
+                    planned_date__lte=sunday,
+                )
+                .select_related("planting__crop", "planting__block")
+                .order_by("event_type", "planting__crop__name")
+            )
+
+            seed_events = events.filter(event_type="seed")
+            potup_events = events.filter(event_type="pot_up")
+            transplant_events = events.filter(event_type="transplant")
+
+            # Calculate bench space usage
+            # All trays currently on benches this week:
+            # seeded before this week AND not yet transplanted
+            on_bench = (
+                NurseryEvent.objects.filter(
+                    planting__planning_year=year_obj,
+                    event_type="seed",
+                    planned_date__lte=sunday,
+                )
+                .exclude(
+                    # Exclude if transplant has already happened
+                    planting__nursery_events__event_type="transplant",
+                    planting__nursery_events__planned_date__lt=monday,
+                )
+                .aggregate(total_trays=Sum("planned_tray_count"))["total_trays"]
+                or 0
+            )
+
+            # Add pot-up trays (they replace seed trays but may be larger)
+            potup_on_bench = (
+                NurseryEvent.objects.filter(
+                    planting__planning_year=year_obj,
+                    event_type="pot_up",
+                    planned_date__lte=sunday,
+                )
+                .exclude(
+                    planting__nursery_events__event_type="transplant",
+                    planting__nursery_events__planned_date__lt=monday,
+                )
+                .aggregate(total_trays=Sum("planned_tray_count"))["total_trays"]
+                or 0
+            )
+
+            weeks_data.append(
+                {
+                    "week_num": wk,
+                    "monday": monday,
+                    "seed_events": seed_events,
+                    "potup_events": potup_events,
+                    "transplant_events": transplant_events,
+                    "total_events": events.count(),
+                    "bench_trays": on_bench + potup_on_bench,
+                }
+            )
+
+        # Greenhouse capacity (could be a setting)
+        greenhouse_capacity = 120  # trays
+
+        # Peak bench usage across entire season for the chart
+        bench_by_week = []
+        for wk in range(1, 53):
+            monday = Week(year, wk).monday()
+            sunday = monday + timedelta(days=6)
+
+            trays = (
+                NurseryEvent.objects.filter(
+                    planting__planning_year=year_obj,
+                    event_type__in=["seed", "pot_up"],
+                    planned_date__lte=sunday,
+                )
+                .exclude(
+                    planting__nursery_events__event_type="transplant",
+                    planting__nursery_events__planned_date__lt=monday,
+                )
+                .aggregate(total=Sum("planned_tray_count"))["total"]
+                or 0
+            )
+
+            bench_by_week.append(
+                {
+                    "week": wk,
+                    "trays": trays,
+                    "pct": (
+                        min(100, trays / greenhouse_capacity * 100) if greenhouse_capacity else 0
+                    ),
+                    "over_capacity": trays > greenhouse_capacity,
+                }
+            )
+
+        peak_week = max(bench_by_week, key=lambda x: x["trays"])
+
+        ctx.update(
+            {
+                "year": year_obj,
+                "center_week": center_week,
+                "weeks": weeks_data,
+                "greenhouse_capacity": greenhouse_capacity,
+                "bench_by_week": bench_by_week,
+                "peak_week": peak_week,
+            }
+        )
+        return ctx
+
+
+class HarvestCalendarView(TemplateView):
+    """What's available each week across all plantings."""
+
+    template_name = "planning/harvest_calendar.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+
+        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+        year = year_obj.year
+
+        # Build week range
+        week_start = kwargs.get("week_start", 1)
+        week_end = kwargs.get("week_end", 52)
+
+        # Get all harvest events grouped by crop and week
+        events = (
+            HarvestEvent.objects.filter(
+                planting__planning_year=year_obj,
+            )
+            .exclude(planting__status__in=["skipped", "failed", "revised"])
+            .select_related("planting__crop", "planting__block")
+            .order_by("planting__crop__name", "planned_date")
+        )
+
+        # Build matrix: crop_name → {week → total_qty}
+        crop_weeks = {}
+        all_crops = set()
+
+        for he in events:
+            crop_name = he.planting.crop.name
+            wk = he.planned_date.isocalendar()[1]
+            unit = he.planting.crop.harvest_unit
+
+            if crop_name not in crop_weeks:
+                crop_weeks[crop_name] = {
+                    "crop": he.planting.crop,
+                    "unit": unit,
+                    "weeks": {},
+                    "total": Decimal("0"),
+                }
+
+            qty = he.actual_quantity or he.planned_quantity or Decimal("0")
+            crop_weeks[crop_name]["weeks"][wk] = (
+                crop_weeks[crop_name]["weeks"].get(wk, Decimal("0")) + qty
+            )
+            crop_weeks[crop_name]["total"] += qty
+            all_crops.add(crop_name)
+
+        # Sort crops by type then name
+        sorted_crops = sorted(
+            crop_weeks.values(), key=lambda c: (c["crop"].crop_type, c["crop"].name)
+        )
+
+        # Weekly totals (count of crops available)
+        weeks = list(range(week_start, week_end + 1))
+        week_crop_counts = {}
+        for wk in weeks:
+            count = sum(1 for c in sorted_crops if wk in c["weeks"] and c["weeks"][wk] > 0)
+            week_crop_counts[wk] = count
+
+        ctx.update(
+            {
+                "year": year_obj,
+                "crops": sorted_crops,
+                "weeks": weeks,
+                "week_crop_counts": week_crop_counts,
+                "total_crops": len(all_crops),
+            }
+        )
+        return ctx
+
+
+class PlantingReviseView(View):
+    """Mark existing planting as revised, create a new one as its replacement.
+
+    The original is kept for historical comparison.
+    The new planting points back to the original via revision_of.
+    """
+
+    template_name = "planning/partials/planting_form.html"
+
+    def get(self, request, pk):
+        original = get_object_or_404(Planting, pk=pk)
+
+        # Pre-populate form with original values
+        initial = {
+            "crop": original.crop,
+            "crop_season": original.crop_season,
+            "variety": original.variety,
+            "block": original.block,
+            "bed_start": original.bed_start,
+            "bed_end": original.bed_end,
+            "planned_plant_date": original.planned_plant_date,
+            "succession_group": original.succession_group,
+            "notes": f"Revision of planting #{original.id}: {original.notes}",
+        }
+
+        ctx = self._build_context(request, original, initial)
+        return render(request, self.template_name, ctx)
+
+    def post(self, request, pk):
+        original = get_object_or_404(Planting, pk=pk)
+        year_obj = original.planning_year
+
+        crop_id = request.POST.get("crop")
+        crop_season_id = request.POST.get("crop_season")
+        block_id = request.POST.get("block")
+
+        try:
+            crop = CropInfo.objects.get(id=crop_id)
+            crop_season = CropBySeason.objects.get(id=crop_season_id)
+            block = Block.objects.get(id=block_id)
+        except (CropInfo.DoesNotExist, CropBySeason.DoesNotExist, Block.DoesNotExist):
+            messages.error(request, "Invalid crop, season, or block.")
+            return redirect("planning:planting_edit", pk=pk)
+
+        bed_start = int(request.POST.get("bed_start", 1))
+        bed_end = int(request.POST.get("bed_end", 1))
+        plant_date_str = request.POST.get("planned_plant_date")
+        plant_date = date.fromisoformat(plant_date_str)
+
+        bedfeet = (bed_end - bed_start + 1) * block.bedfeet_per_bed
+        first_harvest = plant_date + timedelta(days=crop_season.dtm_days)
+        last_harvest = first_harvest + timedelta(weeks=crop_season.harvest_weeks - 1)
+        planned_yield = bedfeet * crop_season.total_yield_per_bedfoot
+
+        # Mark original as revised
+        original.status = "revised"
+        original.notes += f"\nRevised on {date.today()}"
+        original.save()
+
+        # Cancel original's future harvest events
+        original.harvest_events.filter(
+            planned_date__gt=date.today(),
+            actual_quantity__isnull=True,
+        ).delete()
+
+        # Create revised planting
+        revised = Planting.objects.create(
+            planning_year=year_obj,
+            revision_of=original,
+            crop=crop,
+            crop_season=crop_season,
+            variety=request.POST.get("variety", ""),
+            block=block,
+            bed_start=bed_start,
+            bed_end=bed_end,
+            planned_bedfeet=bedfeet,
+            planned_plant_date=plant_date,
+            planned_first_harvest_date=first_harvest,
+            planned_last_harvest_date=last_harvest,
+            planned_total_yield=planned_yield,
+            succession_group=request.POST.get("succession_group", ""),
+            status="planned",
+            notes=request.POST.get("notes", ""),
+        )
+
+        revised.generate_nursery_events()
+        revised.generate_harvest_events()
+
+        messages.success(
+            request,
+            f"Revision created: {revised.crop.name} in {revised.block.name}. "
+            f"Original planting #{original.id} marked as revised.",
+        )
+
+        if request.headers.get("HX-Request"):
+            return HttpResponse(
+                status=204,
+                headers={"HX-Trigger": "plantingRevised"},
+            )
+
+        return redirect("planning:planting_detail", pk=revised.id)
+
+    def _build_context(self, request, original, initial):
+        crops = CropInfo.objects.all().order_by("crop_type", "name")
+        blocks = Block.objects.all().order_by("block_type", "walk_route_order")
+
+        crop_season_choices = (
+            CropBySeason.objects.filter(
+                crop=original.crop,
+                block_type=original.block.block_type,
+            )
+            if original
+            else []
+        )
+
+        return {
+            "is_htmx": bool(request.headers.get("HX-Request")),
+            "is_revision": True,
+            "original": original,
+            "crop_choices": crops,
+            "block_choices": blocks,
+            "crop_season_choices": crop_season_choices,
+            "selected_crop": original.crop,
+            "selected_block": original.block,
+            "form": type(
+                "Form",
+                (),
+                {
+                    field: type("Field", (), {"value": lambda s, v=val: v})()
+                    for field, val in initial.items()
+                },
+            )(),
+        }
+
+
+class PlantingStatusUpdateView(View):
+    """HTMX: quick status update without full form."""
+
+    def post(self, request, pk):
+        planting = get_object_or_404(Planting, pk=pk)
+        new_status = request.POST.get("status")
+
+        valid_statuses = [s[0] for s in PlantingStatus.choices]
+        if new_status not in valid_statuses:
+            return HttpResponse(status=400)
+
+        old_status = planting.status
+        planting.status = new_status
+
+        # Auto-set dates based on status transitions
+        today = date.today()
+
+        if new_status == "planted" and old_status == "planned":
+            if not planting.actual_plant_date:
+                planting.actual_plant_date = today
+
+        elif new_status == "harvesting" and old_status in ("planted", "growing"):
+            if not planting.actual_first_harvest_date:
+                planting.actual_first_harvest_date = today
+
+        elif new_status == "complete":
+            if not planting.actual_last_harvest_date:
+                planting.actual_last_harvest_date = today
+
+        planting.save()
+
+        messages.success(request, f"{planting.crop.name} status: {old_status} → {new_status}")
+
+        # Return updated detail panel
+        if request.headers.get("HX-Request"):
+            return redirect("planning:planting_detail_htmx", pk=pk)
+
+        return redirect("planning:matrix")
+
+
+# planning/views.py (FieldScheduleView)
+
+
+class FieldScheduleView(TemplateView):
+    """Week-by-week field tasks: plantings, terminations, bed prep."""
+
+    template_name = "planning/field_schedule.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+
+        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+        year = year_obj.year
+
+        week_num = kwargs.get("week", date.today().isocalendar()[1])
+        week_start = max(1, week_num - 1)
+        week_end = min(52, week_start + 5)
+
+        weeks_data = []
+
+        for wk in range(week_start, week_end + 1):
+            monday = Week(year, wk).monday()
+            sunday = monday + timedelta(days=6)
+
+            # Plantings starting this week
+            planting_this_week = (
+                Planting.objects.filter(
+                    planning_year=year_obj,
+                    planned_plant_date__gte=monday,
+                    planned_plant_date__lte=sunday,
+                )
+                .exclude(status__in=["skipped", "failed", "revised"])
+                .select_related("crop", "crop_season", "block")
+                .order_by("block__walk_route_order", "bed_start")
+            )
+
+            # Direct seeded plantings (no nursery)
+            direct_seed_this_week = planting_this_week.filter(crop__nursery_weeks=0)
+
+            # Transplants this week (from nursery events)
+            transplant_this_week = (
+                NurseryEvent.objects.filter(
+                    planting__planning_year=year_obj,
+                    event_type="transplant",
+                    planned_date__gte=monday,
+                    planned_date__lte=sunday,
+                )
+                .select_related("planting__crop", "planting__block", "planting__crop_season")
+                .order_by("planting__block__walk_route_order", "planting__bed_start")
+            )
+
+            # Beds finishing this week (last harvest)
+            finishing_this_week = (
+                Planting.objects.filter(
+                    planning_year=year_obj,
+                    planned_last_harvest_date__gte=monday,
+                    planned_last_harvest_date__lte=sunday,
+                )
+                .exclude(status__in=["skipped", "failed", "revised"])
+                .select_related("crop", "block")
+                .order_by("block__walk_route_order", "bed_start")
+            )
+
+            # Beds freed this week (available for replanting)
+            beds_freed = []
+            for p in finishing_this_week:
+                beds_freed.append(
+                    {
+                        "block": p.block,
+                        "bed_start": p.bed_start,
+                        "bed_end": p.bed_end,
+                        "bedfeet": p.planned_bedfeet,
+                        "prev_crop": p.crop.name,
+                        "family": p.crop.botanical_family,
+                    }
+                )
+
+            # Infrastructure tasks this week
+            # (trellising, irrigation setup for plantings)
+            trellis_tasks = []
+            for p in planting_this_week:
+                if p.crop_season.trellis_system:
+                    trellis_tasks.append(
+                        {
+                            "block": p.block.name,
+                            "beds": f"b{p.bed_start}-{p.bed_end}",
+                            "crop": p.crop.name,
+                            "system": p.crop_season.trellis_system,
+                        }
+                    )
+
+            mulch_tasks = []
+            for p in planting_this_week:
+                if p.crop_season.mulch:
+                    mulch_tasks.append(
+                        {
+                            "block": p.block.name,
+                            "beds": f"b{p.bed_start}-{p.bed_end}",
+                            "crop": p.crop.name,
+                            "mulch": p.crop_season.mulch,
+                        }
+                    )
+
+            weeks_data.append(
+                {
+                    "week_num": wk,
+                    "monday": monday,
+                    "sunday": sunday,
+                    "is_current": (wk == date.today().isocalendar()[1]),
+                    "direct_seed": direct_seed_this_week,
+                    "transplants": transplant_this_week,
+                    "finishing": finishing_this_week,
+                    "beds_freed": beds_freed,
+                    "trellis_tasks": trellis_tasks,
+                    "mulch_tasks": mulch_tasks,
+                    "total_tasks": (
+                        direct_seed_this_week.count()
+                        + transplant_this_week.count()
+                        + len(trellis_tasks)
+                        + len(mulch_tasks)
+                    ),
+                    "bedfeet_going_in": sum(p.planned_bedfeet for p in planting_this_week),
+                    "bedfeet_coming_out": sum(b["bedfeet"] for b in beds_freed),
+                }
+            )
+
+        ctx.update(
+            {
+                "year": year_obj,
+                "week_num": week_num,
+                "weeks": weeks_data,
+                "prev_start": max(1, week_start - 4),
+                "next_start": min(52, week_end + 1),
+            }
+        )
+        return ctx
+
+
+# (HTMX helper views)
+class CropSeasonOptionsView(View):
+    """HTMX: return <option> elements for crop_season select."""
+
+    def get(self, request):
+        crop_id = request.GET.get("crop")
+        block_id = request.GET.get("block")
+
+        options = []
+
+        if crop_id and block_id:
+            try:
+                block = Block.objects.get(id=block_id)
+                seasons = CropBySeason.objects.filter(
+                    crop_id=crop_id,
+                    block_type=block.block_type,
+                )
+                for cs in seasons:
+                    crop = cs.crop
+                    options.append(
+                        f'<option value="{cs.id}">'
+                        f"{cs.get_block_type_display()} — "
+                        f"DTM {cs.dtm_days}d · "
+                        f"{cs.harvest_weeks}wk harvest · "
+                        f"{cs.total_yield_per_bedfoot}{crop.harvest_unit}/bf"
+                        f"</option>"
+                    )
+            except (Block.DoesNotExist, ValueError):
+                pass
+
+        if not options:
+            options = ['<option value="">— select crop and block first —</option>']
+
+        return HttpResponse("".join(options))
+
+
+class HarvestDateCalcView(View):
+    """HTMX: return calculated harvest dates as HTML fragment."""
+
+    def get(self, request):
+        crop_season_id = request.GET.get("crop_season")
+        plant_date_str = request.GET.get("planned_plant_date")
+
+        if not crop_season_id or not plant_date_str:
+            return HttpResponse('<span class="muted">Select crop season and plant date.</span>')
+
+        try:
+            cs = CropBySeason.objects.select_related("crop").get(id=crop_season_id)
+            plant_date = date.fromisoformat(plant_date_str)
+
+            first_harvest = plant_date + timedelta(days=cs.dtm_days)
+            last_harvest = first_harvest + timedelta(weeks=cs.harvest_weeks - 1)
+
+            seed_date = None
+            if cs.crop.nursery_weeks:
+                seed_date = plant_date - timedelta(weeks=cs.crop.nursery_weeks)
+
+            parts = [
+                f"<dt>First harvest:</dt>"
+                f'<dd>{first_harvest.strftime("%b %-d")} '
+                f"(Wk {first_harvest.isocalendar()[1]})</dd>",
+                f"<dt>Last harvest:</dt>"
+                f'<dd>{last_harvest.strftime("%b %-d")} '
+                f"(Wk {last_harvest.isocalendar()[1]})</dd>",
+            ]
+
+            if seed_date:
+                parts.append(
+                    f"<dt>Seed date:</dt>"
+                    f'<dd>{seed_date.strftime("%b %-d")} '
+                    f"(Wk {seed_date.isocalendar()[1]})</dd>"
+                )
+
+            return HttpResponse("".join(parts))
+
+        except (CropBySeason.DoesNotExist, ValueError):
+            return HttpResponse('<span class="muted">Invalid crop season or date.</span>')
+
+
+class BedfeetCalcView(View):
+    """HTMX: return calculated bedfeet and yield as HTML fragment."""
+
+    def get(self, request):
+        block_id = request.GET.get("block")
+        bed_start = request.GET.get("bed_start")
+        bed_end = request.GET.get("bed_end")
+        crop_season_id = request.GET.get("crop_season")
+
+        if not all([block_id, bed_start, bed_end]):
+            return HttpResponse('<span class="muted">Select block and beds.</span>')
+
+        try:
+            block = Block.objects.get(id=block_id)
+            start = int(bed_start)
+            end = int(bed_end)
+
+            if end < start:
+                return HttpResponse('<span style="color:red;">Bed end must be ≥ bed start.</span>')
+            if end > block.num_beds:
+                return HttpResponse(
+                    f'<span style="color:red;">'
+                    f"{block.name} only has {block.num_beds} beds.</span>"
+                )
+
+            num_beds = end - start + 1
+            bedfeet = num_beds * block.bedfeet_per_bed
+
+            parts = [
+                f"<dt>Bedfeet:</dt><dd>{bedfeet:,} bf</dd>"
+                f"<dt>Beds:</dt><dd>{num_beds} beds × {block.bedfeet_per_bed}bf</dd>"
+            ]
+
+            if crop_season_id:
+                try:
+                    cs = CropBySeason.objects.select_related("crop").get(id=crop_season_id)
+                    planned_yield = bedfeet * float(cs.total_yield_per_bedfoot)
+                    weekly_yield = planned_yield / cs.harvest_weeks
+
+                    parts.extend(
+                        [
+                            f"<dt>Planned yield:</dt>"
+                            f"<dd>{planned_yield:,.0f} {cs.crop.harvest_unit}"
+                            f" ({weekly_yield:,.0f}/wk)</dd>",
+                        ]
+                    )
+
+                    if cs.crop.units_per_bin:
+                        total_bins = planned_yield / cs.crop.units_per_bin
+                        weekly_bins = weekly_yield / cs.crop.units_per_bin
+                        parts.append(
+                            f"<dt>Est. bins:</dt>"
+                            f"<dd>{total_bins:.1f} total "
+                            f"({weekly_bins:.1f}/wk {cs.crop.harvest_bin})</dd>"
+                        )
+
+                    if cs.tp_inrow_spacing and cs.rows_per_bed:
+                        plants = bedfeet * cs.rows_per_bed / float(cs.tp_inrow_spacing)
+                        parts.append(f"<dt>Plants:</dt><dd>~{int(plants):,}</dd>")
+
+                except CropBySeason.DoesNotExist:
+                    pass
+
+            return HttpResponse("".join(parts))
+
+        except (Block.DoesNotExist, ValueError):
+            return HttpResponse('<span class="muted">Invalid selection.</span>')
+
+
+class WeekToDateView(View):
+    """HTMX: convert week number input to date value for date field."""
+
+    def get(self, request):
+        week_num = request.GET.get("plant_week_input")
+        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+
+        if not week_num or not year_obj:
+            return HttpResponse("")
+
+        try:
+            wk = int(week_num)
+            if not (1 <= wk <= 52):
+                return HttpResponse("")
+
+            monday = Week(year_obj.year, wk).monday()
+            # Return as date input value
+            return HttpResponse(
+                f'<input type="date" name="planned_plant_date" '
+                f'id="id_planned_plant_date" '
+                f'value="{monday.isoformat()}" required '
+                f'hx-get="{{% url "planning:harvest_date_calc" %}}" '
+                f'hx-target="#calc-dates" '
+                f'hx-trigger="change" '
+                f"hx-include=\"[name='crop_season']\">"
+            )
+        except (ValueError, TypeError):
+            return HttpResponse("")
+
+
+class BedConflictCheckView(View):
+    """HTMX: check if proposed beds conflict with existing plantings."""
+
+    def get(self, request):
+        block_id = request.GET.get("block")
+        bed_start = request.GET.get("bed_start")
+        bed_end = request.GET.get("bed_end")
+        plant_date_str = request.GET.get("planned_plant_date")
+        crop_season_id = request.GET.get("crop_season")
+        planting_id = request.GET.get("planting_id")  # for edits
+
+        if not all([block_id, bed_start, bed_end, plant_date_str, crop_season_id]):
+            return HttpResponse("")
+
+        try:
+            start = int(bed_start)
+            end = int(bed_end)
+            plant_date = date.fromisoformat(plant_date_str)
+            cs = CropBySeason.objects.get(id=crop_season_id)
+
+            first_harvest = plant_date + timedelta(days=cs.dtm_days)
+            last_harvest = first_harvest + timedelta(weeks=cs.harvest_weeks - 1)
+
+            year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+
+            conflicts = (
+                Planting.objects.filter(
+                    planning_year=year_obj,
+                    block_id=block_id,
+                    bed_start__lte=end,
+                    bed_end__gte=start,
+                    planned_last_harvest_date__gte=plant_date,
+                    planned_plant_date__lte=last_harvest,
+                )
+                .exclude(status__in=["skipped", "failed", "revised"])
+                .select_related("crop")
+            )
+
+            if planting_id:
+                conflicts = conflicts.exclude(id=planting_id)
+
+            if not conflicts.exists():
+                return HttpResponse('<span style="color: #166534;">✓ No conflicts</span>')
+
+            parts = ['<div class="warning"><strong>⚠ Bed Conflicts:</strong>']
+            for c in conflicts:
+                parts.append(
+                    f"<br>· {c.crop.name} ({c.status}) "
+                    f"beds {c.bed_start}-{c.bed_end}, "
+                    f'{c.planned_plant_date.strftime("%b %-d")} – '
+                    f'{c.planned_last_harvest_date.strftime("%b %-d")}'
+                )
+            parts.append("</div>")
+
+            return HttpResponse("".join(parts))
+
+        except (CropBySeason.DoesNotExist, ValueError):
+            return HttpResponse("")
