@@ -4,8 +4,28 @@ from django.views.generic import TemplateView, FormView
 from django.db.models import Q
 from datetime import date, timedelta
 from isoweek import Week
+from django import forms
+from reference.models import CropInfo
 
 from planning.models import Planting, HarvestEvent, PlanningYear
+
+
+class InventoryHarvestInView(TemplateView):
+    """Add harvest to inventory"""
+
+    template_name = "operations/harvest_entry.html"
+
+
+class FieldWalkNoteView(TemplateView):
+    """Field walk notes"""
+
+    template_name = "operations/harvest_entry.html"
+
+
+class PlantingHarvestEntryView(TemplateView):
+    """Planting Harvest Entry"""
+
+    template_name = "operations/harvest_entry.html"
 
 
 class WeeklyHarvestEntryView(TemplateView):
@@ -139,295 +159,6 @@ class WeeklyHarvestEntryView(TemplateView):
                     pass
 
         return redirect("operations:harvest_entry_week", week=kwargs.get("week"))
-
-
-class HarvestListPrintView(TemplateView):
-    """Generates a print-ready harvest list for a given week."""
-
-    template_name = "reports/harvest_list_print.html"
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-
-        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
-        week_num = kwargs["week"]
-        year = year_obj.year
-
-        week_monday = Week(year, week_num).monday()
-        week_sunday = week_monday + timedelta(days=6)
-
-        events = (
-            HarvestEvent.objects.filter(
-                planting__planning_year=year_obj,
-                planned_date__gte=week_monday,
-                planned_date__lte=week_sunday,
-            )
-            .exclude(planting__status__in=["skipped", "failed"])
-            .select_related("planting__crop", "planting__block")
-            .order_by(
-                "planting__block__walk_route_order",
-                "planting__block__name",
-                "planting__bed_start",
-            )
-        )
-
-        items = []
-        bin_totals = {}  # bin_type → count
-        tools_needed = set()
-
-        for he in events:
-            crop = he.planting.crop
-            bins_needed = None
-            if crop.units_per_bin and he.planned_quantity:
-                bins_needed = math.ceil(float(he.planned_quantity) / crop.units_per_bin)
-                bin_type = crop.harvest_bin or "unknown"
-                bin_totals[bin_type] = bin_totals.get(bin_type, 0) + bins_needed
-
-            if crop.harvest_tools:
-                tools_needed.add(crop.harvest_tools)
-
-            items.append(
-                {
-                    "crop": crop.name,
-                    "block": he.planting.block.name,
-                    "beds": f"{he.planting.bed_start}-{he.planting.bed_end}",
-                    "target_qty": he.planned_quantity,
-                    "units": he.planned_units,
-                    "bins_needed": bins_needed,
-                    "bin_type": crop.harvest_bin,
-                    "harvest_tools": crop.harvest_tools,
-                }
-            )
-
-        # Calculate harvest day (typically Thursday for Sat market)
-        # This could be configurable
-        harvest_day = week_monday + timedelta(days=3)  # Thursday
-
-        ctx.update(
-            {
-                "year": year_obj,
-                "week_num": week_num,
-                "harvest_day": harvest_day,
-                "items": items,
-                "bin_totals": sorted(bin_totals.items()),
-                "total_bins": sum(bin_totals.values()),
-                "tools_needed": sorted(tools_needed),
-                "total_items": len(items),
-            }
-        )
-        return ctx
-
-
-class SeedOrderReportView(TemplateView):
-    """Calculate seed needs from all planned plantings."""
-
-    template_name = "reports/seed_order.html"
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-
-        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
-
-        plantings = (
-            Planting.objects.filter(
-                planning_year=year_obj,
-            )
-            .exclude(status="skipped")
-            .select_related("crop", "crop_season", "block")
-        )
-
-        overplant = float(year_obj.overplant_factor)
-
-        # Aggregate by crop
-        crop_needs = {}  # crop_id → {crop, total_bedfeet, seed_calc}
-
-        for p in plantings:
-            crop = p.crop
-            cs = p.crop_season
-            crop_id = crop.id
-
-            if crop_id not in crop_needs:
-                crop_needs[crop_id] = {
-                    "crop": crop,
-                    "total_bedfeet": 0,
-                    "plantings": [],
-                }
-
-            crop_needs[crop_id]["total_bedfeet"] += p.planned_bedfeet
-            crop_needs[crop_id]["plantings"].append(p)
-
-        # Calculate seed quantities
-        seed_orders = []
-
-        for crop_id, data in crop_needs.items():
-            crop = data["crop"]
-            cs = data["plantings"][0].crop_season  # use first planting's profile
-            total_bf = data["total_bedfeet"]
-
-            result = self._calculate_seeds(crop, cs, total_bf, overplant)
-            result["crop"] = crop
-            result["total_bedfeet"] = total_bf
-            result["num_plantings"] = len(data["plantings"])
-            seed_orders.append(result)
-
-        # Sort: direct seeded first, then transplanted, then vegetative
-        seed_orders.sort(
-            key=lambda x: (
-                0 if x["method"] == "direct_seed" else 1 if x["method"] == "transplant" else 2,
-                x["crop"].name,
-            )
-        )
-
-        ctx.update(
-            {
-                "year": year_obj,
-                "overplant_pct": int((overplant - 1) * 100),
-                "seed_orders": seed_orders,
-                "direct_seeded": [s for s in seed_orders if s["method"] == "direct_seed"],
-                "transplanted": [s for s in seed_orders if s["method"] == "transplant"],
-                "vegetative": [s for s in seed_orders if s["method"] == "vegetative"],
-            }
-        )
-        return ctx
-
-    def _calculate_seeds(self, crop, crop_season, total_bedfeet, overplant):
-        """Three calculation paths depending on propagation type."""
-
-        if crop.propagation_type != "seed":
-            return self._calc_vegetative(crop, crop_season, total_bedfeet, overplant)
-
-        if crop_season.ds_seed_rate:
-            return self._calc_direct_seed(crop, crop_season, total_bedfeet, overplant)
-
-        if crop_season.tp_inrow_spacing:
-            return self._calc_transplant(crop, crop_season, total_bedfeet, overplant)
-
-        return {
-            "method": "unknown",
-            "seeds_needed": 0,
-            "ounces_needed": 0,
-            "order_rounded": "?",
-            "calculation": "Missing seed rate and spacing data",
-        }
-
-    def _calc_direct_seed(self, crop, cs, total_bf, overplant):
-        rows = cs.rows_per_bed or 1
-        rate = cs.ds_seed_rate  # seeds per rowfoot
-
-        seeds = total_bf * rows * rate * overplant
-
-        ounces = None
-        order = None
-        if crop.seeds_per_ounce and crop.seeds_per_ounce > 0:
-            ounces = seeds / float(crop.seeds_per_ounce)
-            order = self._round_order(ounces)
-
-        return {
-            "method": "direct_seed",
-            "seeds_needed": int(seeds),
-            "ounces_needed": ounces,
-            "order_rounded": order,
-            "calculation": (
-                f"{total_bf}bf × {rows}rows × {rate}seeds/rf "
-                f"× {overplant} overplant = {int(seeds)} seeds"
-            ),
-        }
-
-    def _calc_transplant(self, crop, cs, total_bf, overplant):
-        rows = cs.rows_per_bed or 1
-        spacing = float(cs.tp_inrow_spacing)
-
-        plants = total_bf * rows / spacing * overplant
-
-        seeds_per_cell = crop.seeds_per_cell or 1
-        thinned = crop.thinned_plants or 0
-
-        if thinned > 0 and seeds_per_cell > 1:
-            # Multi-seed, thin to one: cells needed = plants needed
-            cells = plants
-        else:
-            cells = plants
-
-        seeds = cells * seeds_per_cell
-
-        # Tray count
-        trays = None
-        if crop.seeded_tray_size and crop.seeded_tray_size > 1:
-            trays = math.ceil(cells / crop.seeded_tray_size)
-
-        ounces = None
-        order = None
-        if crop.seeds_per_ounce and crop.seeds_per_ounce > 0:
-            ounces = seeds / float(crop.seeds_per_ounce)
-            order = self._round_order(ounces)
-
-        return {
-            "method": "transplant",
-            "plants_needed": int(plants),
-            "cells_needed": int(cells),
-            "seeds_needed": int(seeds),
-            "trays_needed": trays,
-            "tray_size": crop.seeded_tray_size,
-            "ounces_needed": ounces,
-            "order_rounded": order,
-            "calculation": (
-                f"{total_bf}bf × {rows}rows ÷ {spacing}ft spacing "
-                f"× {overplant} = {int(plants)} plants, "
-                f"{int(seeds)} seeds ({seeds_per_cell}/cell)"
-            ),
-        }
-
-    def _calc_vegetative(self, crop, cs, total_bf, overplant):
-        rows = cs.rows_per_bed or 1
-        spacing = float(cs.tp_inrow_spacing) if cs.tp_inrow_spacing else 1
-
-        pieces = total_bf * rows / spacing * overplant
-
-        # Garlic: ~60 cloves per pound
-        # Potato: ~2 pieces per pound (cut seed potatoes)
-        weight_per_piece = {
-            "vegetative_clove": 60,  # cloves per lb
-            "vegetative_tuber": 2,  # pieces per lb
-            "vegetative_slip": None,  # ordered by count
-        }
-
-        pcs_per_lb = weight_per_piece.get(crop.propagation_type)
-        order_weight = None
-        if pcs_per_lb:
-            order_weight = f"{math.ceil(pieces / pcs_per_lb)} lb"
-        else:
-            order_weight = f"{int(pieces)} slips"
-
-        return {
-            "method": "vegetative",
-            "pieces_needed": int(pieces),
-            "seeds_needed": 0,
-            "ounces_needed": None,
-            "order_rounded": order_weight,
-            "calculation": (
-                f"{total_bf}bf × {rows}rows ÷ {spacing}ft " f"× {overplant} = {int(pieces)} pieces"
-            ),
-        }
-
-    def _round_order(self, ounces):
-        """Round to common seed packet sizes."""
-        if ounces is None:
-            return "?"
-        if ounces < 0.1:
-            return "1 pkt"
-        if ounces < 0.25:
-            return "1/4 oz"
-        if ounces < 0.5:
-            return "1/2 oz"
-        if ounces < 1:
-            return "1 oz"
-        if ounces < 4:
-            return f"{math.ceil(ounces)} oz"
-        # Convert to pounds
-        lbs = ounces / 16
-        if lbs < 1:
-            return f"{math.ceil(ounces)} oz ({lbs:.1f} lb)"
-        return f"{math.ceil(lbs)} lb"
 
 
 class InventoryDashboardView(TemplateView):
@@ -793,3 +524,215 @@ class FieldWalkView(TemplateView):
 
         messages.success(request, f"Field walk complete. Recorded {notes_created} observations.")
         return redirect("operations:field_walk_current")
+
+
+class SeedOrderReportView(TemplateView):
+    """Calculate seed needs from all planned plantings."""
+
+    template_name = "reports/seed_order.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+
+        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+
+        plantings = (
+            Planting.objects.filter(
+                planning_year=year_obj,
+            )
+            .exclude(status="skipped")
+            .select_related("crop", "crop_season", "block")
+        )
+
+        overplant = float(year_obj.overplant_factor)
+
+        # Aggregate by crop
+        crop_needs = {}  # crop_id → {crop, total_bedfeet, seed_calc}
+
+        for p in plantings:
+            crop = p.crop
+            cs = p.crop_season
+            crop_id = crop.id
+
+            if crop_id not in crop_needs:
+                crop_needs[crop_id] = {
+                    "crop": crop,
+                    "total_bedfeet": 0,
+                    "plantings": [],
+                }
+
+            crop_needs[crop_id]["total_bedfeet"] += p.planned_bedfeet
+            crop_needs[crop_id]["plantings"].append(p)
+
+        # Calculate seed quantities
+        seed_orders = []
+
+        for crop_id, data in crop_needs.items():
+            crop = data["crop"]
+            cs = data["plantings"][0].crop_season  # use first planting's profile
+            total_bf = data["total_bedfeet"]
+
+            result = self._calculate_seeds(crop, cs, total_bf, overplant)
+            result["crop"] = crop
+            result["total_bedfeet"] = total_bf
+            result["num_plantings"] = len(data["plantings"])
+            seed_orders.append(result)
+
+        # Sort: direct seeded first, then transplanted, then vegetative
+        seed_orders.sort(
+            key=lambda x: (
+                0 if x["method"] == "direct_seed" else 1 if x["method"] == "transplant" else 2,
+                x["crop"].name,
+            )
+        )
+
+        ctx.update(
+            {
+                "year": year_obj,
+                "overplant_pct": int((overplant - 1) * 100),
+                "seed_orders": seed_orders,
+                "direct_seeded": [s for s in seed_orders if s["method"] == "direct_seed"],
+                "transplanted": [s for s in seed_orders if s["method"] == "transplant"],
+                "vegetative": [s for s in seed_orders if s["method"] == "vegetative"],
+            }
+        )
+        return ctx
+
+    def _calculate_seeds(self, crop, crop_season, total_bedfeet, overplant):
+        """Three calculation paths depending on propagation type."""
+
+        if crop.propagation_type != "seed":
+            return self._calc_vegetative(crop, crop_season, total_bedfeet, overplant)
+
+        if crop_season.ds_seed_rate:
+            return self._calc_direct_seed(crop, crop_season, total_bedfeet, overplant)
+
+        if crop_season.tp_inrow_spacing:
+            return self._calc_transplant(crop, crop_season, total_bedfeet, overplant)
+
+        return {
+            "method": "unknown",
+            "seeds_needed": 0,
+            "ounces_needed": 0,
+            "order_rounded": "?",
+            "calculation": "Missing seed rate and spacing data",
+        }
+
+    def _calc_direct_seed(self, crop, cs, total_bf, overplant):
+        rows = cs.rows_per_bed or 1
+        rate = cs.ds_seed_rate  # seeds per rowfoot
+
+        seeds = total_bf * rows * rate * overplant
+
+        ounces = None
+        order = None
+        if crop.seeds_per_ounce and crop.seeds_per_ounce > 0:
+            ounces = seeds / float(crop.seeds_per_ounce)
+            order = self._round_order(ounces)
+
+        return {
+            "method": "direct_seed",
+            "seeds_needed": int(seeds),
+            "ounces_needed": ounces,
+            "order_rounded": order,
+            "calculation": (
+                f"{total_bf}bf × {rows}rows × {rate}seeds/rf "
+                f"× {overplant} overplant = {int(seeds)} seeds"
+            ),
+        }
+
+    def _calc_transplant(self, crop, cs, total_bf, overplant):
+        rows = cs.rows_per_bed or 1
+        spacing = float(cs.tp_inrow_spacing)
+
+        plants = total_bf * rows / spacing * overplant
+
+        seeds_per_cell = crop.seeds_per_cell or 1
+        thinned = crop.thinned_plants or 0
+
+        if thinned > 0 and seeds_per_cell > 1:
+            # Multi-seed, thin to one: cells needed = plants needed
+            cells = plants
+        else:
+            cells = plants
+
+        seeds = cells * seeds_per_cell
+
+        # Tray count
+        trays = None
+        if crop.seeded_tray_size and crop.seeded_tray_size > 1:
+            trays = math.ceil(cells / crop.seeded_tray_size)
+
+        ounces = None
+        order = None
+        if crop.seeds_per_ounce and crop.seeds_per_ounce > 0:
+            ounces = seeds / float(crop.seeds_per_ounce)
+            order = self._round_order(ounces)
+
+        return {
+            "method": "transplant",
+            "plants_needed": int(plants),
+            "cells_needed": int(cells),
+            "seeds_needed": int(seeds),
+            "trays_needed": trays,
+            "tray_size": crop.seeded_tray_size,
+            "ounces_needed": ounces,
+            "order_rounded": order,
+            "calculation": (
+                f"{total_bf}bf × {rows}rows ÷ {spacing}ft spacing "
+                f"× {overplant} = {int(plants)} plants, "
+                f"{int(seeds)} seeds ({seeds_per_cell}/cell)"
+            ),
+        }
+
+    def _calc_vegetative(self, crop, cs, total_bf, overplant):
+        rows = cs.rows_per_bed or 1
+        spacing = float(cs.tp_inrow_spacing) if cs.tp_inrow_spacing else 1
+
+        pieces = total_bf * rows / spacing * overplant
+
+        # Garlic: ~60 cloves per pound
+        # Potato: ~2 pieces per pound (cut seed potatoes)
+        weight_per_piece = {
+            "vegetative_clove": 60,  # cloves per lb
+            "vegetative_tuber": 2,  # pieces per lb
+            "vegetative_slip": None,  # ordered by count
+        }
+
+        pcs_per_lb = weight_per_piece.get(crop.propagation_type)
+        order_weight = None
+        if pcs_per_lb:
+            order_weight = f"{math.ceil(pieces / pcs_per_lb)} lb"
+        else:
+            order_weight = f"{int(pieces)} slips"
+
+        return {
+            "method": "vegetative",
+            "pieces_needed": int(pieces),
+            "seeds_needed": 0,
+            "ounces_needed": None,
+            "order_rounded": order_weight,
+            "calculation": (
+                f"{total_bf}bf × {rows}rows ÷ {spacing}ft " f"× {overplant} = {int(pieces)} pieces"
+            ),
+        }
+
+    def _round_order(self, ounces):
+        """Round to common seed packet sizes."""
+        if ounces is None:
+            return "?"
+        if ounces < 0.1:
+            return "1 pkt"
+        if ounces < 0.25:
+            return "1/4 oz"
+        if ounces < 0.5:
+            return "1/2 oz"
+        if ounces < 1:
+            return "1 oz"
+        if ounces < 4:
+            return f"{math.ceil(ounces)} oz"
+        # Convert to pounds
+        lbs = ounces / 16
+        if lbs < 1:
+            return f"{math.ceil(ounces)} oz ({lbs:.1f} lb)"
+        return f"{math.ceil(lbs)} lb"
