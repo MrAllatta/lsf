@@ -1,0 +1,185 @@
+{# reports/crop_map_print.html #}
+{% extends "base.html" %}
+
+{% block title %}Crop Map — Week {{ week_num }} — {{ year.year }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/print.css' %}" media="print">
+<style>
+.crop-map-print-page {
+    font-family: 'Courier New', monospace;
+    font-size: 7pt;
+}
+
+.crop-map-print-page table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.crop-map-print-page th,
+.crop-map-print-page td {
+    border: 1px solid #ccc;
+    padding: 1px 2px;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 7pt;
+}
+
+.crop-map-print-page .block-label {
+    width: 40px;
+    font-weight: bold;
+    background: #eee;
+    text-align: center;
+    writing-mode: horizontal-tb;
+}
+
+.crop-map-print-page .week-header {
+    text-align: center;
+    font-size: 6.5pt;
+    background: #ddd;
+    width: {{ col_width }}px;
+}
+
+.crop-map-print-page .month-header {
+    text-align: center;
+    font-weight: bold;
+    background: #bbb;
+    font-size: 7pt;
+}
+
+.crop-map-print-page .current-week {
+    background: #fffde7 !important;
+}
+
+.crop-map-print-page .planting-cell {
+    text-align: center;
+    font-size: 6.5pt;
+    cursor: default;
+}
+
+.crop-map-print-page .fallow-cell {
+    background: #f5f5f0;
+}
+
+/* Crop type colors — same as screen but print-safe */
+{% for crop_type, color in crop_colors.items %}
+.crop-{{ crop_type|lower|slugify }} { background: {{ color }}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+{% endfor %}
+
+@media screen {
+    .crop-map-print-page { max-width: 100%; overflow-x: auto; }
+}
+
+@media print {
+    @page { size: 11in 8.5in; margin: 0.3in; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="crop-map-print-page">
+
+    <div class="no-print" style="margin-bottom:0.5rem;">
+        <button onclick="window.print()" class="btn btn-primary">🖨 Print (11×17)</button>
+        <span class="muted" style="font-size:0.85rem;">
+            Weeks {{ display_start }}–{{ display_end }} · {{ year.year }}
+            · Current: Week {{ week_num }}
+        </span>
+        <span style="margin-left:1rem;">
+            Show weeks:
+            <input type="number" id="start-week" value="{{ display_start }}" min="1" max="52" style="width:45px;">
+            –
+            <input type="number" id="end-week" value="{{ display_end }}" min="1" max="52" style="width:45px;">
+            <button onclick="location.href='?start='+document.getElementById('start-week').value+'&end='+document.getElementById('end-week').value" class="btn">Go</button>
+        </span>
+    </div>
+    
+    <div style="margin-bottom:3px; font-size:8pt; font-weight:bold;">
+        CROP MAP — {{ year.year }} · Weeks {{ display_start }}–{{ display_end }}
+        · Generated {{ today|date:"F j, Y" }}
+    </div>
+    
+    <table>
+        {# Month header row #}
+        <thead>
+            <tr>
+                <th class="block-label" style="width:40px;">&nbsp;</th>
+                {% for wk in week_labels %}
+                {% if wk.is_month_start %}
+                {# Calculate colspan for this month #}
+                <th class="month-header {% if wk.num == week_num %}current-week{% endif %}"
+                    colspan="{% with ns=forloop.counter %}{% for next_wk in week_labels|slice:forloop.counter %}{% if next_wk.is_month_start and not forloop.first %}{% endif %}{% endfor %}{% endwith %}1">
+                    {{ wk.month }}
+                </th>
+                {% endif %}
+                {% endfor %}
+            </tr>
+            {# Week number row #}
+            <tr>
+                <th class="block-label" style="width:40px;">Block</th>
+                {% for wk in week_labels %}
+                <th class="week-header {% if wk.num == week_num %}current-week{% endif %}">
+                    {{ wk.num }}
+                </th>
+                {% endfor %}
+            </tr>
+        </thead>
+        
+        <tbody>
+            {% for block_row in block_rows %}
+            
+            {# Block section — may span multiple rows #}
+            {% for row in block_row.rows %}
+            <tr>
+                {# Block label — only on first row #}
+                {% if forloop.first %}
+                <td class="block-label"
+                    rowspan="{{ block_row.num_rows|default:1 }}"
+                    style="vertical-align:middle; font-size:7pt; font-weight:bold;">
+                    {{ block_row.block.name }}
+                </td>
+                {% endif %}
+                
+                {# Week cells for this row #}
+                {% for cell in row %}
+                {% if cell %}
+                    {# Check if this is the start of the planting span #}
+                    {% with plant_wk=cell.planned_plant_date|date:"W"|add:0 %}
+                    {# Simplified — render each occupied cell individually #}
+                    <td class="planting-cell crop-{{ cell.crop.crop_type|lower|slugify }}"
+                        title="{{ cell.crop.name }} b{{ cell.bed_start }}-{{ cell.bed_end }}">
+                        {% if forloop.counter == 1 or row|prev_item:forloop.counter0 != cell %}
+                        {{ cell.crop.name|truncatechars:8 }}
+                        {% endif %}
+                    </td>
+                    {% endwith %}
+                {% else %}
+                    <td class="fallow-cell">&nbsp;</td>
+                {% endif %}
+                {% endfor %}
+            </tr>
+            {% endfor %}
+            
+            {# Thin divider between blocks #}
+            <tr style="height:2px; background:#aaa;">
+                <td colspan="{{ num_weeks|add:1 }}" style="padding:0; border:none; background:#999;"></td>
+            </tr>
+            
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    {# Legend #}
+    <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px; font-size:7pt;">
+        {% for crop_type, color in crop_colors.items %}
+        <span style="background:{{ color }}; padding:1px 4px; border:1px solid rgba(0,0,0,0.1); -webkit-print-color-adjust:exact; print-color-adjust:exact;">
+            {{ crop_type }}
+        </span>
+        {% endfor %}
+        <span style="background:#f5f5f0; padding:1px 4px; border:1px solid #ccc;">
+            fallow
+        </span>
+    </div>
+</div>
+{% endblock %}
