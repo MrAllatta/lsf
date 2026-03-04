@@ -15,10 +15,12 @@ urlpatterns = [
         views.HarvestListPrintView.as_view(),
         name="harvest_list_print",
     ),
-    # path('pack-list/week/<int:week>/', views.PackListPrintView.as_view(),
-    #     name='pack_list_print'),
-    # path('weekly-schedule/week/<int:week>/', views.WeeklySchedulePrintView.as_view(),
-    #     name='weekly_schedule_print'),
+    path("pack-list/week/<int:week>/", views.PackListPrintView.as_view(), name="pack_list_print"),
+    path(
+        "weekly-schedule/week/<int:week>/",
+        views.WeeklySchedulePrintView.as_view(),
+        name="weekly_schedule_print",
+    ),
     path(
         "crop-map/print/week/<int:week>/", views.CropMapPrintView.as_view(), name="crop_map_print"
     ),
