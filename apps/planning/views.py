@@ -6,9 +6,9 @@ from django.db.models import Q
 from datetime import date
 from isoweek import Week
 
-from reference.models import Block, BlockType
-from .models import Planting, PlanningYear, Planting
-from django.views.generic import DetailView, CreateView, UpdateView
+from reference.models import Block, BlockType, CropInfo
+from .models import Planting, PlanningYear, Planting, HarvestEvent
+from django.views.generic import DetailView, CreateView, UpdateView, View, FormView
 
 from django.http import HttpResponse
 from django import forms
@@ -277,6 +277,69 @@ class PlantingCreateView(CreateView):
         return redirect("planning:matrix")
 
 
+class PlantingUpdateView(UpdateView):
+    """Update a planting. Handles both full-page and HTMX partial."""
+
+    model = Planting
+    template_name = "planning/partials/planting_form.html"
+    fields = [
+        "crop",
+        "crop_season",
+        "variety",
+        "block",
+        "bed_start",
+        "bed_end",
+        "planned_plant_date",
+    ]
+
+    def get_initial(self):
+        initial = super().get_initial()
+        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+        initial["planning_year"] = year_obj
+
+        # Pre-fill from URL params (clicked cell in matrix)
+        block_id = self.kwargs.get("block_id")
+        week = self.kwargs.get("week")
+
+        if block_id:
+            block = Block.objects.get(id=block_id)
+            initial["block"] = block
+            initial["bed_start"] = 1
+            initial["bed_end"] = block.num_beds
+
+        if week and year_obj:
+            initial["planned_plant_date"] = Week(year_obj.year, week).monday()
+
+        return initial
+
+    def form_valid(self, form):
+        planting = form.save(commit=False)
+        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+        planting.planning_year = year_obj
+
+        # Auto-calculate bedfeet
+        block = planting.block
+        beds = planting.bed_end - planting.bed_start + 1
+        planting.planned_bedfeet = beds * block.bedfeet_per_bed
+
+        planting.save()
+
+        # Generate nursery and harvest events
+        planting.generate_nursery_events()
+        planting.generate_harvest_events()
+
+        if self.request.headers.get("HX-Request"):
+            # HTMX: return the detail panel for the new planting
+            return HttpResponse(
+                status=204,
+                headers={
+                    "HX-Trigger": "plantingCreated",
+                    "HX-Redirect": reverse("planning:matrix"),
+                },
+            )
+        return redirect("planning:matrix")
+
+
 class SuccessionPreviewView(View):
     """HTMX: show a preview table of what successions will be created."""
 
@@ -406,6 +469,182 @@ class SuccessionPreviewView(View):
         lines.append("</tbody></table>")
 
         return HttpResponse("".join(lines))
+
+
+class SuccessionForm(forms.Form):
+    crop = forms.ModelChoiceField(queryset=CropInfo.objects.all())
+    block_type = forms.ChoiceField(choices=BlockType.choices)
+    block = forms.ModelChoiceField(queryset=Block.objects.all())
+    bedfeet_per_succession = forms.IntegerField(min_value=1)
+    first_plant_week = forms.IntegerField(min_value=1, max_value=52)
+    last_plant_week = forms.IntegerField(min_value=1, max_value=52)
+    interval_weeks = forms.IntegerField(min_value=1, max_value=8)
+    reuse_beds = forms.BooleanField(required=False, initial=False)
+
+    def clean(self):
+        cleaned = super().clean()
+        block = cleaned.get("block")
+        crop = cleaned.get("crop")
+
+        if block and crop:
+            # Find matching crop_season profile
+            try:
+                cleaned["crop_season"] = CropBySeason.objects.get(
+                    crop=crop,
+                    block_type=cleaned["block_type"],
+                )
+            except CropBySeason.DoesNotExist:
+                raise forms.ValidationError(
+                    f"No season profile for {crop.name} in " f"{cleaned['block_type']} blocks."
+                )
+        return cleaned
+
+
+class SuccessionCreateView(FormView):
+    template_name = "planning/succession_form.html"
+    form_class = SuccessionForm
+
+    def form_valid(self, form):
+        data = form.cleaned_data
+        year_obj = PlanningYear.objects.filter(status__in=["planning", "active"]).first()
+
+        crop = data["crop"]
+        crop_season = data["crop_season"]
+        block = data["block"]
+        bf_per = data["bedfeet_per_succession"]
+        first_week = data["first_plant_week"]
+        last_week = data["last_plant_week"]
+        interval = data["interval_weeks"]
+        reuse = data["reuse_beds"]
+
+        year = year_obj.year
+        beds_per = math.ceil(bf_per / block.bedfeet_per_bed)
+
+        # Generate succession list
+        successions = []
+        current_week = first_week
+        succession_num = 1
+
+        while current_week <= last_week:
+            plant_date = Week(year, current_week).monday()
+
+            harvest_start = plant_date + timedelta(days=crop_season.dtm_days)
+            harvest_end = harvest_start + timedelta(weeks=crop_season.harvest_weeks - 1)
+
+            successions.append(
+                {
+                    "num": succession_num,
+                    "plant_week": current_week,
+                    "plant_date": plant_date,
+                    "harvest_start": harvest_start,
+                    "harvest_end": harvest_end,
+                    "harvest_start_week": harvest_start.isocalendar()[1],
+                    "harvest_end_week": harvest_end.isocalendar()[1],
+                }
+            )
+
+            current_week += interval
+            succession_num += 1
+
+        # Assign beds
+        if reuse:
+            successions = self._assign_beds_with_reuse(successions, block, beds_per, crop_season)
+        else:
+            successions = self._assign_beds_sequential(successions, block, beds_per)
+
+        # Check if we exceed block capacity
+        max_bed = max(s["bed_end"] for s in successions)
+        if max_bed > block.num_beds:
+            messages.error(
+                self.request,
+                f"Succession requires {max_bed} beds but {block.name} "
+                f"only has {block.num_beds}. Reduce bedfeet, enable bed "
+                f"reuse, or choose a larger block.",
+            )
+            return self.form_invalid(form)
+
+        # Create the plantings
+        group_id = f"{crop.name}-{block.name}-{year}"
+
+        created = []
+        for s in successions:
+            bedfeet = (s["bed_end"] - s["bed_start"] + 1) * block.bedfeet_per_bed
+
+            p = Planting.objects.create(
+                planning_year=year_obj,
+                crop=crop,
+                crop_season=crop_season,
+                block=block,
+                bed_start=s["bed_start"],
+                bed_end=s["bed_end"],
+                planned_bedfeet=bedfeet,
+                planned_plant_date=s["plant_date"],
+                planned_first_harvest_date=s["harvest_start"],
+                planned_last_harvest_date=s["harvest_end"],
+                planned_total_yield=bedfeet * crop_season.total_yield_per_bedfoot,
+                succession_group=group_id,
+                status="planned",
+            )
+            p.generate_nursery_events()
+            p.generate_harvest_events()
+            created.append(p)
+
+        messages.success(
+            self.request,
+            f"Created {len(created)} succession plantings of {crop.name} "
+            f"in {block.name}, weeks {first_week}-{last_week}.",
+        )
+        return redirect("planning:matrix")
+
+    def _assign_beds_sequential(self, successions, block, beds_per):
+        """Each succession gets the next set of beds."""
+        current_bed = 1
+        for s in successions:
+            s["bed_start"] = current_bed
+            s["bed_end"] = current_bed + beds_per - 1
+            current_bed += beds_per
+        return successions
+
+    def _assign_beds_with_reuse(self, successions, block, beds_per, crop_season):
+        """Reuse beds when earlier successions finish."""
+        # Track bed ranges and their availability
+        # Each entry: (bed_start, bed_end, available_after_date)
+        bed_slots = []
+
+        for s in successions:
+            plant_date = s["plant_date"]
+
+            # Find a slot that's available by this plant date
+            assigned = False
+            for slot in bed_slots:
+                if slot["available_after"] <= plant_date:
+                    s["bed_start"] = slot["bed_start"]
+                    s["bed_end"] = slot["bed_end"]
+                    # Update slot availability to after THIS succession finishes
+                    # Add 1 week buffer for cleanup/prep
+                    slot["available_after"] = s["harvest_end"] + timedelta(weeks=1)
+                    assigned = True
+                    break
+
+            if not assigned:
+                # Need new beds
+                if bed_slots:
+                    next_start = max(sl["bed_end"] for sl in bed_slots) + 1
+                else:
+                    next_start = 1
+
+                s["bed_start"] = next_start
+                s["bed_end"] = next_start + beds_per - 1
+
+                bed_slots.append(
+                    {
+                        "bed_start": next_start,
+                        "bed_end": next_start + beds_per - 1,
+                        "available_after": s["harvest_end"] + timedelta(weeks=1),
+                    }
+                )
+
+        return successions
 
 
 class NurseryScheduleView(TemplateView):
